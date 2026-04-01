@@ -1,6 +1,6 @@
 # brosettlement-mpc-core
 
-Reusable Go packages for MPC/TSS flows, transport framing, and share persistence.
+Reusable Go packages for MPC/TSS flows and transport framing.
 
 ## Module
 
@@ -18,32 +18,30 @@ import "github.com/BroLabel/brosettlement-mpc-core/..."
 
 - `protocol`: session and frame contracts used between peers.
 - `transport`: small transport interfaces plus in-memory adapters.
-- `shares`: share serialization and persistence abstractions.
-- `shares/file`: encrypted on-disk share store.
 - `tss`: high-level service layer for DKG and signing sessions.
-- `tss/preparams`: pre-parameter pool configuration and runtime.
+
+## Public API Boundary
+
+Public API is limited to imports from `protocol`, `transport`, and `tss`.
+
+Packages under `internal/*` are implementation details and are not part of the public API surface.
 
 ## Basic Usage
 
 ```go
 package main
 
-import "github.com/BroLabel/brosettlement-mpc-core/protocol"
+import (
+	"log/slog"
+
+	"github.com/BroLabel/brosettlement-mpc-core/tss"
+)
 
 func main() {
-	_ = protocol.Frame{
-		SessionID: "session-1",
-		FromParty: "party-a",
-		Payload:   []byte("hello"),
-	}
+	logger := slog.Default()
+	_ = tss.NewBnbService(logger)
 }
 ```
-
-## Compatibility Note
-
-The `tss/...` packages still import `brosettlement-mpc-signer/pkg/idgen`. Until that helper is moved into this repository or published as its own module, consumers that build `tss/...` packages need that dependency available in their build graph.
-
-Packages outside `tss/...` do not depend on `pkg/idgen`.
 
 ## Development
 

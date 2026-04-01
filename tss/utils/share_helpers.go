@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	coreshares "github.com/BroLabel/brosettlement-mpc-core/shares"
+	coreshares "brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
 )
 
 // NormalizeKeyID validates and normalizes key id.

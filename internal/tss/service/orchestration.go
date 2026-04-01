@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	coreshares "brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
-	tsslogging "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tss/logging"
-	tssruntime "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tss/runtime"
-	tssbnbrunner "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/runner"
-	tssutils "brosettlement-mpc-signer/brosettlement-mpc-core/tss/utils"
-	coretransport "brosettlement-mpc-signer/brosettlement-mpc-core/transport"
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	tsslogging "github.com/BroLabel/brosettlement-mpc-core/internal/tss/logging"
+	tssruntime "github.com/BroLabel/brosettlement-mpc-core/internal/tss/runtime"
+	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
+	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
+	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
@@ -70,17 +70,17 @@ type DKGInput struct {
 }
 
 type SignInput struct {
-	SessionID         string
-	LocalPartyID      string
-	OrgID             string
-	KeyID             string
-	Parties           []string
-	Digest            []byte
-	Algorithm         string
-	Chain             string
-	Transport         coretransport.FrameTransport
-	EmptyKeyErr       error
-	MetadataMismatch  error
+	SessionID        string
+	LocalPartyID     string
+	OrgID            string
+	KeyID            string
+	Parties          []string
+	Digest           []byte
+	Algorithm        string
+	Chain            string
+	Transport        coretransport.FrameTransport
+	EmptyKeyErr      error
+	MetadataMismatch error
 }
 
 func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareStore ShareStore) *Service {

@@ -3,7 +3,7 @@ package tss
 import (
 	"context"
 
-	coreshares "brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 

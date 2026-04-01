@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	tssbnbutils "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/utils"
-	"brosettlement-mpc-signer/brosettlement-mpc-core/protocol"
+	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 )
 
 type testMetrics struct{}

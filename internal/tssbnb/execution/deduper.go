@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/protocol"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 )
 
 const dedupPruneEvery = 128

@@ -5,11 +5,11 @@ import (
 	"errors"
 	"log/slog"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/preparams"
-	tssrequests "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tss/requests"
-	tssservice "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tss/service"
-	tssbnbrunner "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/runner"
-	bnbutils "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/support"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
+	tssrequests "github.com/BroLabel/brosettlement-mpc-core/internal/tss/requests"
+	tssservice "github.com/BroLabel/brosettlement-mpc-core/internal/tss/service"
+	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
+	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
@@ -61,8 +61,8 @@ var (
 	ErrTransportRequired        = errors.New("transport is required")
 	ErrKeyIDRequired            = errors.New("key id is required")
 	ErrDigestMissing            = errors.New("digest is required")
-	ErrMissingDKGPublicKey = errors.New("dkg result missing public key")
-	ErrMissingDKGAddress   = errors.New("dkg result missing address")
+	ErrMissingDKGPublicKey      = errors.New("dkg result missing public key")
+	ErrMissingDKGAddress        = errors.New("dkg result missing address")
 )
 
 func NewBnbService(logger *slog.Logger) *Service {

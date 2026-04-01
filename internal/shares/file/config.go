@@ -3,7 +3,7 @@ package file
 import (
 	"errors"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 )
 
 var (

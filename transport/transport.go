@@ -3,7 +3,7 @@ package transport
 import (
 	"context"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/protocol"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 )
 
 // FrameTransport is the minimal boundary for exchanging protocol frames.

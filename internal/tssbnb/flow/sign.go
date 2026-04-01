@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/idgen"
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/execution"
-	tssbnbutils "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/utils"
-	bnbutils "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/support"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/idgen"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/execution"
+	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
+	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"

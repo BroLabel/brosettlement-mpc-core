@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"strings"
 
-	coreshares "brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
-	tssutils "brosettlement-mpc-signer/brosettlement-mpc-core/tss/utils"
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 
@@ -34,11 +34,11 @@ type DKGPersistInput struct {
 }
 
 type SignPrepareInput struct {
-	KeyID             string
-	OrgID             string
-	Algorithm         string
-	EmptyKeyErr       error
-	MetadataMismatch  error
+	KeyID            string
+	OrgID            string
+	Algorithm        string
+	EmptyKeyErr      error
+	MetadataMismatch error
 }
 
 func PersistShareAfterDKG(ctx context.Context, store ShareStore, runner Runner, in DKGPersistInput) error {

@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/preparams"
-	tssbnbrunner "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/runner"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
+	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 

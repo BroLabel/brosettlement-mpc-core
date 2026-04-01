@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	tssutils "brosettlement-mpc-signer/brosettlement-mpc-core/tss/utils"
+	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	"github.com/google/uuid"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/protocol"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 )
 
 type RecvFrameFunc func(context.Context) (protocol.Frame, error)

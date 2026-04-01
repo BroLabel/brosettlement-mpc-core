@@ -1,7 +1,7 @@
 package bnb
 
 import (
-	coretransport "brosettlement-mpc-signer/brosettlement-mpc-core/transport"
+	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 

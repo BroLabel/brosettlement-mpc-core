@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"sync"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/flow"
-	tssbnbutils "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/utils"
-	bnbutils "brosettlement-mpc-signer/brosettlement-mpc-core/internal/tssbnb/support"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/flow"
+	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
+	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )

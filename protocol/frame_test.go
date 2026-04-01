@@ -3,7 +3,7 @@ package protocol_test
 import (
 	"testing"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/protocol"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 )
 
 func TestFrameBroadcastCompatibility(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 )
 
 const fileMode os.FileMode = 0o600

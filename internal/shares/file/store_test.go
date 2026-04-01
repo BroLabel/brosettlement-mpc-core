@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"brosettlement-mpc-signer/brosettlement-mpc-core/internal/shares"
+	"github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 )
 
 func TestFileStoreSavesAndLoadsEncryptedShare(t *testing.T) {

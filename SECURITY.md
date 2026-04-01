@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| latest (`main`) | ✅ |
-| older releases | ❌ — please upgrade |
+| latest (`main`) | yes |
+| older releases | no - please upgrade |
 
 We only provide security fixes for the latest release. If you are running an older version, upgrade before reporting.
 
@@ -24,17 +24,11 @@ Send an email to **security@brolabel.io** with:
 - **Subject**: `[SECURITY] <short description>`
 - A description of the vulnerability
 - Steps to reproduce (proof-of-concept code or test case if possible)
-- Affected component (`mpc-core` / `mpc-co-signer` / both)
+- Affected package or component (for example `protocol`, `transport`, `tss`, or an `internal/...` package)
 - Your assessment of the severity and potential impact
 - Your name / handle if you want credit (optional)
 
-You may encrypt your report using our PGP key (see below).
-
-### PGP Key
-
-```
-[publish your PGP fingerprint here once generated]
-```
+If you need encrypted reporting, mention that in your email and we will coordinate a secure channel.
 
 ---
 
@@ -55,14 +49,13 @@ We follow **coordinated disclosure**: we ask that you give us reasonable time to
 
 ### In scope
 
-- Key generation (DKG) protocol — correctness and entropy
-- Signing protocol — unauthorized signing, signature forgery
-- Key share confidentiality — leakage of Share A, B, or C
+- Key generation (DKG) protocol - correctness and entropy
+- Signing protocol - unauthorized signing, signature forgery
+- Key share confidentiality - leakage of Share A, B, or C
 - Share encryption / decryption (`AES-256-GCM` implementation)
-- Memory safety — key material persistence beyond intended lifetime (e.g., Share B not zeroed on SIGTERM)
-- Authentication / authorization bypass on the co-signer RPC/REST interface
+- Memory safety - key material persistence beyond intended lifetime (e.g., Share B not zeroed on SIGTERM)
+- Authentication or authorization flaws in services built on top of this library's APIs
 - Dependency vulnerabilities in `tss-lib` or other cryptographic dependencies
-- Docker image attack surface (`mpc-co-signer`)
 
 ### Out of scope
 
@@ -77,10 +70,10 @@ We follow **coordinated disclosure**: we ask that you give us reasonable time to
 
 This library assumes:
 
-- The **server (MPC Signer)** may be compromised — the design should remain secure
-- The **client (Co-Signer)** may be compromised — the design should remain secure
+- The **server (MPC Signer)** may be compromised - the design should remain secure
+- The **client (Co-Signer)** may be compromised - the design should remain secure
 - Both parties being simultaneously compromised is outside scope (that is, by design, signing is possible)
-- Network transport is **untrusted** — all communication must be authenticated and encrypted
+- Network transport is **untrusted** - all communication must be authenticated and encrypted
 
 Vulnerabilities that break the noncustodial guarantee (i.e., allow one party to sign without the other) are **critical severity**.
 
@@ -107,4 +100,4 @@ We do not currently operate a formal bug bounty program. We offer **public recog
 
 Thank you to the security researchers who have responsibly disclosed vulnerabilities:
 
-*(none yet — be the first)*
+*(none yet - be the first)*

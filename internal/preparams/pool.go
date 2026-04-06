@@ -160,6 +160,15 @@ func (p *Pool) Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 	if !p.cfg.Enabled {
 		return p.syncGenerate(ctx)
 	}
+	if p.runCtx == nil {
+		p.poolEmpty.Add(1)
+		if !p.cfg.SyncFallbackOnEmpty {
+			return nil, fmt.Errorf("acquire preparams from pool: %w", context.DeadlineExceeded)
+		}
+		p.syncFallback.Add(1)
+		p.logger.Warn("preparams pool not started, using sync fallback")
+		return p.syncGenerate(ctx)
+	}
 
 	acquireCtx := ctx
 	cancel := func() {}
@@ -266,6 +275,9 @@ func (p *Pool) generateOne() {
 	started := time.Now()
 	params, err := p.gen(p.runCtx)
 	if err != nil {
+		if p.runCtx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return
+		}
 		p.generationsFailed.Add(1)
 		p.logger.Warn("preparams generation failed", "err", err)
 		p.waitBackoff()

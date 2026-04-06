@@ -1,10 +1,12 @@
 package preparams
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -140,6 +142,40 @@ func TestPoolCloseStopsWorkers(t *testing.T) {
 	}
 }
 
+func TestPoolCloseDoesNotCountCanceledGenerationAsFailure(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 1
+	cfg.MaxConcurrency = 1
+
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	started := make(chan struct{})
+	pool := newPoolForTest(logger, cfg,
+		func(ctx context.Context) (*ecdsakeygen.LocalPreParams, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		func(params *ecdsakeygen.LocalPreParams) bool { return true },
+	)
+
+	if err := pool.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	<-started
+	if err := pool.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	snapshot := pool.Snapshot()
+	if snapshot.GenerationsFailed != 0 {
+		t.Fatalf("GenerationsFailed = %d, want 0", snapshot.GenerationsFailed)
+	}
+	if strings.Contains(logs.String(), "preparams generation failed") {
+		t.Fatalf("unexpected generation failure log: %s", logs.String())
+	}
+}
+
 func TestPoolGenerationErrorRetry(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.TargetSize = 1
@@ -168,6 +204,39 @@ func TestPoolGenerationErrorRetry(t *testing.T) {
 	}
 	if attempts.Load() < 3 {
 		t.Fatalf("attempts = %d, want >=3", attempts.Load())
+	}
+}
+
+func TestPoolAcquireWithoutStartFallsBackImmediately(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 1
+	cfg.MaxConcurrency = 1
+	cfg.AcquireTimeout = 200 * time.Millisecond
+	cfg.SyncFallbackOnEmpty = true
+
+	var calls atomic.Int32
+	pool := newPoolForTest(testLogger(), cfg,
+		func(ctx context.Context) (*ecdsakeygen.LocalPreParams, error) {
+			calls.Add(1)
+			return &ecdsakeygen.LocalPreParams{}, nil
+		},
+		func(params *ecdsakeygen.LocalPreParams) bool { return params != nil },
+	)
+	defer func() { _ = pool.Close() }()
+
+	started := time.Now()
+	got, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("Acquire() returned nil")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("generator calls = %d, want 1", calls.Load())
+	}
+	if elapsed := time.Since(started); elapsed >= cfg.AcquireTimeout/2 {
+		t.Fatalf("Acquire() took %s, want immediate fallback without waiting for timeout %s", elapsed, cfg.AcquireTimeout)
 	}
 }
 

@@ -37,28 +37,50 @@ type BnbRunner struct {
 	metrics   bnbutils.Metrics
 }
 
-func NewBnbRunner(logger *slog.Logger) *BnbRunner {
-	return newBnbRunner(logger, bnbutils.NoopMetrics{}, tssbnbutils.LoadRunnerConfigFromEnv())
+type Option func(*options)
+
+type options struct {
+	metrics bnbutils.Metrics
+	cfg     tssbnbutils.RunnerConfig
 }
 
-func NewBnbRunnerWithMetrics(logger *slog.Logger, metrics bnbutils.Metrics) *BnbRunner {
-	return newBnbRunner(logger, metrics, tssbnbutils.LoadRunnerConfigFromEnv())
+func WithMetrics(metrics bnbutils.Metrics) Option {
+	return func(opts *options) {
+		opts.metrics = metrics
+	}
 }
 
-func newBnbRunner(logger *slog.Logger, metrics bnbutils.Metrics, cfg tssbnbutils.RunnerConfig) *BnbRunner {
+func WithConfig(cfg tssbnbutils.RunnerConfig) Option {
+	return func(opts *options) {
+		opts.cfg = cfg
+	}
+}
+
+func NewBnbRunner(logger *slog.Logger, opts ...Option) *BnbRunner {
+	cfg := options{
+		metrics: bnbutils.NoopMetrics{},
+		cfg:     tssbnbutils.LoadRunnerConfigFromEnv(),
+	}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(&cfg)
+	}
+
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if metrics == nil {
-		metrics = bnbutils.NoopMetrics{}
+	if cfg.metrics == nil {
+		cfg.metrics = bnbutils.NoopMetrics{}
 	}
 	return &BnbRunner{
 		ecdsaKeys: map[string]ecdsakeygen.LocalPartySaveData{},
 		ecdsaSigs: map[string]*common.SignatureData{},
 		logger:    logger,
 		debug:     bnbutils.IsTSSDebugEnabled(logger),
-		cfg:       cfg,
-		metrics:   metrics,
+		cfg:       cfg.cfg,
+		metrics:   cfg.metrics,
 	}
 }
 

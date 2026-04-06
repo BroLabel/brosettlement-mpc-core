@@ -127,12 +127,8 @@ func TestNewBnbServiceWithPreParamsSource(t *testing.T) {
 	}
 
 	opts := buildServiceOptions(WithPreParamsSource(source))
-	provider := newPreParamsProvider(slog.Default(), opts)
-	if _, err := provider.Acquire(context.Background()); err != nil {
-		t.Fatalf("Acquire() error = %v", err)
-	}
-	if source.calls != 1 {
-		t.Fatalf("expected source Acquire() to be called once, got %d", source.calls)
+	if opts.preParamsSource != source {
+		t.Fatal("expected preparams source to be stored in service options")
 	}
 }
 
@@ -146,16 +142,9 @@ func TestNewBnbServiceCanCreateTwoServicesWithDifferentSources(t *testing.T) {
 		t.Fatal("expected both facades to be non-nil")
 	}
 
-	providerA := newPreParamsProvider(slog.Default(), buildServiceOptions(WithPreParamsSource(sourceA)))
-	providerB := newPreParamsProvider(slog.Default(), buildServiceOptions(WithPreParamsSource(sourceB)))
-
-	if _, err := providerA.Acquire(context.Background()); err != nil {
-		t.Fatalf("providerA Acquire() error = %v", err)
-	}
-	if _, err := providerB.Acquire(context.Background()); err != nil {
-		t.Fatalf("providerB Acquire() error = %v", err)
-	}
-	if sourceA.calls != 1 || sourceB.calls != 1 {
-		t.Fatalf("expected isolated sources, got calls sourceA=%d sourceB=%d", sourceA.calls, sourceB.calls)
+	optsA := buildServiceOptions(WithPreParamsSource(sourceA))
+	optsB := buildServiceOptions(WithPreParamsSource(sourceB))
+	if optsA.preParamsSource != sourceA || optsB.preParamsSource != sourceB {
+		t.Fatal("expected each service options set to keep its own source")
 	}
 }

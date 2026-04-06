@@ -14,6 +14,7 @@ This keeps preparams storage, file rotation, and PoC-specific orchestration outs
 - Allow two independently constructed services to use different preparams sources without interference.
 - Keep PoC-specific logic, file paths, and storage policy decisions outside core.
 - Remove the legacy expanded constructor and make `NewBnbService` the only public constructor.
+- Remove the similar internal expanded constructor pair in `internal/tssbnb/runner`.
 
 ## Non-Goals
 
@@ -49,6 +50,34 @@ func WithMetrics(metrics bnbutils.Metrics) ServiceOption
 
 The legacy `NewBnbServiceWithConfigAndShareStoreAndMetrics` constructor is removed in favor of this single option-based API.
 
+## Legacy Constructor Audit
+
+This repository currently has one public legacy-style expanded constructor pattern in scope for cleanup:
+
+- `tss.NewBnbServiceWithConfigAndShareStoreAndMetrics`
+
+There is also a similar pair under `internal/*` that is included in this cleanup:
+
+- `internal/tssbnb/runner.NewBnbRunner`
+- `internal/tssbnb/runner.NewBnbRunnerWithMetrics`
+
+The internal runner constructors should be consolidated to a single option-based entrypoint as well so the service and runner layers follow the same construction model.
+
+Planned internal runner API shape:
+
+```go
+func NewBnbRunner(logger *slog.Logger, opts ...Option) *BnbRunner
+```
+
+Supported runner options in this change:
+
+```go
+func WithMetrics(metrics bnbutils.Metrics) Option
+func WithConfig(cfg tssbnbutils.RunnerConfig) Option
+```
+
+`NewBnbRunnerWithMetrics` is removed.
+
 ## Internal Design
 
 The existing internal `Acquire(ctx)` abstraction already matches the desired external preparams source shape closely. The implementation should reuse that shape instead of introducing a second internal protocol.
@@ -70,6 +99,8 @@ Only the internal pool participates in service lifecycle methods:
 - `Snapshot`
 
 Supplying an external preparams source does not change lifecycle ownership. Core consumes the source but does not manage its storage, generation, or cleanup strategy.
+
+The `tss` service constructor should build the internal runner through the new option-based runner API, passing metrics through a runner option instead of selecting a dedicated constructor.
 
 ## Behavioral Rules
 
@@ -93,9 +124,12 @@ Add tests covering:
 - two services can be created with different sources and acquire independently
 - default `NewBnbService(logger)` preserves current behavior when no options are supplied
 - option-based construction can provide config, share store, and metrics after removal of the legacy constructor
+- internal runner default construction preserves current behavior when no options are supplied
+- internal runner can be constructed with metrics via an option after removal of `NewBnbRunnerWithMetrics`
 
 ## Risks
 
 - Removing the legacy constructor is a breaking public API change for callers using it directly.
 - Option precedence must be explicit and stable, especially when both pool config and external source are present.
 - Snapshot and lifecycle behavior must continue to describe the internal pool only, otherwise metrics semantics become ambiguous.
+- The internal runner option names should avoid confusion with the public service option types.

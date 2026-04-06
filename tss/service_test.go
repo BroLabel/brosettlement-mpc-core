@@ -5,8 +5,12 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 
 type noopTransport struct{}
@@ -61,5 +65,97 @@ func TestNewBnbServiceReturnsFacade(t *testing.T) {
 
 	if got := svc.Snapshot(); got != (Snapshot{}) {
 		t.Fatalf("expected zero-value snapshot, got %+v", got)
+	}
+}
+
+type stubShareStore struct{}
+
+func (stubShareStore) SaveShare(_ context.Context, _ string, _ []byte, _ coreshares.ShareMeta) error {
+	return nil
+}
+
+func (stubShareStore) LoadShare(_ context.Context, _ string) (*coreshares.StoredShare, error) {
+	return nil, ErrShareNotFound
+}
+
+func (stubShareStore) DisableShare(_ context.Context, _ string) error {
+	return nil
+}
+
+type sourceStub struct {
+	value *ecdsakeygen.LocalPreParams
+	err   error
+	calls int
+}
+
+func (s *sourceStub) Acquire(_ context.Context) (*ecdsakeygen.LocalPreParams, error) {
+	s.calls++
+	return s.value, s.err
+}
+
+func TestNewBnbServiceWithOptionsConfigShareStoreMetrics(t *testing.T) {
+	cfg := PreParamsConfig{
+		Enabled:             false,
+		TargetSize:          2,
+		MaxConcurrency:      1,
+		GenerateTimeout:     time.Second,
+		AcquireTimeout:      time.Second,
+		RetryBackoff:        time.Millisecond,
+		SyncFallbackOnEmpty: false,
+		FileCacheEnabled:    false,
+		FileCacheDir:        ".tmp/test",
+	}
+	store := stubShareStore{}
+
+	svc := NewBnbService(
+		slog.Default(),
+		WithPreParamsConfig(cfg),
+		WithShareStore(store),
+		WithMetrics(bnbutils.NoopMetrics{}),
+	)
+	if svc == nil {
+		t.Fatal("expected non-nil facade")
+	}
+}
+
+func TestNewBnbServiceWithPreParamsSource(t *testing.T) {
+	source := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+
+	svc := NewBnbService(slog.Default(), WithPreParamsSource(source))
+	if svc == nil {
+		t.Fatal("expected non-nil facade")
+	}
+
+	opts := buildServiceOptions(WithPreParamsSource(source))
+	provider := newPreParamsProvider(slog.Default(), opts)
+	if _, err := provider.Acquire(context.Background()); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if source.calls != 1 {
+		t.Fatalf("expected source Acquire() to be called once, got %d", source.calls)
+	}
+}
+
+func TestNewBnbServiceCanCreateTwoServicesWithDifferentSources(t *testing.T) {
+	sourceA := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+	sourceB := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+
+	svcA := NewBnbService(slog.Default(), WithPreParamsSource(sourceA))
+	svcB := NewBnbService(slog.Default(), WithPreParamsSource(sourceB))
+	if svcA == nil || svcB == nil {
+		t.Fatal("expected both facades to be non-nil")
+	}
+
+	providerA := newPreParamsProvider(slog.Default(), buildServiceOptions(WithPreParamsSource(sourceA)))
+	providerB := newPreParamsProvider(slog.Default(), buildServiceOptions(WithPreParamsSource(sourceB)))
+
+	if _, err := providerA.Acquire(context.Background()); err != nil {
+		t.Fatalf("providerA Acquire() error = %v", err)
+	}
+	if _, err := providerB.Acquire(context.Background()); err != nil {
+		t.Fatalf("providerB Acquire() error = %v", err)
+	}
+	if sourceA.calls != 1 || sourceB.calls != 1 {
+		t.Fatalf("expected isolated sources, got calls sourceA=%d sourceB=%d", sourceA.calls, sourceB.calls)
 	}
 }

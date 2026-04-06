@@ -18,6 +18,20 @@ type Service struct {
 	impl *tssservice.Service
 }
 
+type PreParamsSource interface {
+	Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
+}
+
+type ServiceOption func(*serviceOptions)
+
+type serviceOptions struct {
+	preParamsConfig    PreParamsConfig
+	hasPreParamsConfig bool
+	shareStore         ShareStore
+	metrics            bnbutils.Metrics
+	preParamsSource    PreParamsSource
+}
+
 type SessionDescriptor struct {
 	SessionID string
 	OrgID     string
@@ -51,6 +65,10 @@ type preParamsSnapshotProvider interface {
 	Snapshot() preparams.Snapshot
 }
 
+type preParamsSourcePool struct {
+	source PreParamsSource
+}
+
 type Snapshot = tssservice.Snapshot
 
 var ErrNilRunner = tssservice.ErrNilRunner
@@ -65,17 +83,62 @@ var (
 	ErrMissingDKGAddress        = errors.New("dkg result missing address")
 )
 
-func NewBnbService(logger *slog.Logger) *Service {
-	return NewBnbServiceWithConfigAndShareStoreAndMetrics(
-		logger,
-		LoadPreParamsConfigFromEnv(),
-		nil,
-		nil,
-	)
+func WithPreParamsConfig(cfg PreParamsConfig) ServiceOption {
+	return func(opts *serviceOptions) {
+		opts.preParamsConfig = cfg
+		opts.hasPreParamsConfig = true
+	}
 }
 
-func NewBnbServiceWithConfigAndShareStoreAndMetrics(logger *slog.Logger, cfg PreParamsConfig, shareStore ShareStore, metrics bnbutils.Metrics) *Service {
-	pool := preparams.NewPool(logger, preparams.Config{
+func WithShareStore(store ShareStore) ServiceOption {
+	return func(opts *serviceOptions) {
+		opts.shareStore = store
+	}
+}
+
+func WithMetrics(metrics bnbutils.Metrics) ServiceOption {
+	return func(opts *serviceOptions) {
+		opts.metrics = metrics
+	}
+}
+
+func WithPreParamsSource(source PreParamsSource) ServiceOption {
+	return func(opts *serviceOptions) {
+		opts.preParamsSource = source
+	}
+}
+
+func NewBnbService(logger *slog.Logger, opts ...ServiceOption) *Service {
+	options := buildServiceOptions(opts...)
+	pool := newPreParamsProvider(logger, options)
+
+	runnerOpts := make([]tssbnbrunner.Option, 0, 1)
+	if options.metrics != nil {
+		runnerOpts = append(runnerOpts, tssbnbrunner.WithMetrics(options.metrics))
+	}
+	return newService(tssbnbrunner.NewBnbRunner(logger, runnerOpts...), logger, pool, options.shareStore)
+}
+
+func buildServiceOptions(opts ...ServiceOption) serviceOptions {
+	options := serviceOptions{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(&options)
+	}
+	return options
+}
+
+func newPreParamsProvider(logger *slog.Logger, opts serviceOptions) preParamsProvider {
+	if opts.preParamsSource != nil {
+		return preParamsSourcePool{source: opts.preParamsSource}
+	}
+	cfg := LoadPreParamsConfigFromEnv()
+	if opts.hasPreParamsConfig {
+		cfg = opts.preParamsConfig
+	}
+	return preparams.NewPool(logger, preparams.Config{
 		Enabled:             cfg.Enabled,
 		TargetSize:          cfg.TargetSize,
 		MaxConcurrency:      cfg.MaxConcurrency,
@@ -86,7 +149,22 @@ func NewBnbServiceWithConfigAndShareStoreAndMetrics(logger *slog.Logger, cfg Pre
 		FileCacheEnabled:    cfg.FileCacheEnabled,
 		FileCacheDir:        cfg.FileCacheDir,
 	})
-	return newService(tssbnbrunner.NewBnbRunnerWithMetrics(logger, metrics), logger, pool, shareStore)
+}
+
+func (p preParamsSourcePool) Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error) {
+	return p.source.Acquire(ctx)
+}
+
+func (preParamsSourcePool) Size() int {
+	return 0
+}
+
+func (preParamsSourcePool) Start(context.Context) error {
+	return nil
+}
+
+func (preParamsSourcePool) Close() error {
+	return nil
 }
 
 func newService(r runner, logger *slog.Logger, pool preParamsProvider, shareStore ShareStore) *Service {

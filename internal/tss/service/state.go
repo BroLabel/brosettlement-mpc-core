@@ -20,6 +20,13 @@ type PreParamsPool interface {
 	Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 }
 
+func ResolvePreParamsSource(external PreParamsPool, fallback PreParamsPool) PreParamsPool {
+	if external != nil {
+		return external
+	}
+	return fallback
+}
+
 type Snapshot struct {
 	PreParamsPoolSize          int
 	PreParamsSyncFallbackCount uint64

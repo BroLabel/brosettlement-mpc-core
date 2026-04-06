@@ -47,10 +47,11 @@ type SnapshotPool interface {
 }
 
 type Service struct {
-	runner        Runner
-	logger        *slog.Logger
-	preParamsPool LifecyclePool
-	shareStore    ShareStore
+	runner          Runner
+	logger          *slog.Logger
+	preParamsPool   LifecyclePool
+	preParamsSource PreParamsPool
+	shareStore      ShareStore
 }
 
 type DKGInput struct {
@@ -83,15 +84,20 @@ type SignInput struct {
 	MetadataMismatch error
 }
 
-func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareStore ShareStore) *Service {
+func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareStore ShareStore, externalSource ...PreParamsPool) *Service {
 	if r == nil {
 		panic(ErrNilRunner)
 	}
+	var source PreParamsPool
+	if len(externalSource) > 0 {
+		source = externalSource[0]
+	}
 	return &Service{
-		runner:        r,
-		logger:        logger,
-		preParamsPool: pool,
-		shareStore:    shareStore,
+		runner:          r,
+		logger:          logger,
+		preParamsPool:   pool,
+		preParamsSource: source,
+		shareStore:      shareStore,
 	}
 }
 
@@ -138,7 +144,7 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
 	started := time.Now()
-	err := AttachPreParams(ctx, s.preParamsPool, &job, tssutils.IsECDSA(job.Algorithm))
+	err := AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
 	if err == nil {
 		err = s.runner.RunDKG(ctx, job, in.Transport)
 	}

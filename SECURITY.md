@@ -2,102 +2,85 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| latest (`main`) | yes |
-| older releases | no - please upgrade |
+| Version        | Supported |
+| -------------- | --------- |
+| `main`         | Yes       |
+| older releases | No        |
 
-We only provide security fixes for the latest release. If you are running an older version, upgrade before reporting.
-
----
+We currently provide security fixes only for the latest code on `main`.
 
 ## Reporting a Vulnerability
 
-**Please do not file public GitHub issues for security vulnerabilities.**
+Do not file public GitHub issues for security vulnerabilities.
 
-MPC signing infrastructure is security-critical. A vulnerability here can result in loss of funds or key material. We take all reports seriously and will respond quickly.
+This repository contains reusable MPC/TSS building blocks. A vulnerability here can affect downstream signing systems through incorrect protocol behavior, unsafe transport handling, or exposure of key material, so we treat reports with high priority.
 
 ### How to report
 
 Send an email to **security@brolabel.io** with:
 
-- **Subject**: `[SECURITY] <short description>`
-- A description of the vulnerability
-- Steps to reproduce (proof-of-concept code or test case if possible)
-- Affected package or component (for example `protocol`, `transport`, `tss`, or an `internal/...` package)
-- Your assessment of the severity and potential impact
-- Your name / handle if you want credit (optional)
+- a short description of the issue
+- steps to reproduce
+- affected component or flow
+- impact and severity assessment, if known
+- your name or handle if you want credit
 
-If you need encrypted reporting, mention that in your email and we will coordinate a secure channel.
-
----
+If you want to share encrypted details, mention that in the email and we can coordinate a secure follow-up channel.
 
 ## Response Timeline
 
-| Stage | Target |
-|-------|--------|
-| Initial acknowledgement | 48 hours |
-| Severity assessment | 5 business days |
-| Fix or mitigation plan | 15 business days |
-| Coordinated disclosure | Agreed with reporter |
+| Stage                   | Target                        |
+| ----------------------- | ----------------------------- |
+| Initial acknowledgement | 48 hours                      |
+| Severity assessment     | 5 business days               |
+| Fix or mitigation plan  | 15 business days              |
+| Disclosure timing       | Coordinated with the reporter |
 
-We follow **coordinated disclosure**: we ask that you give us reasonable time to fix the issue before publishing. We will credit you in the release notes unless you prefer to remain anonymous.
-
----
+We follow coordinated disclosure and ask for reasonable time to investigate and fix the issue before public disclosure.
 
 ## Scope
 
 ### In scope
 
-- Key generation (DKG) protocol - correctness and entropy
-- Signing protocol - unauthorized signing, signature forgery
-- Key share confidentiality - leakage of Share A, B, or C
-- Share encryption / decryption (`AES-256-GCM` implementation)
-- Memory safety - key material persistence beyond intended lifetime (e.g., Share B not zeroed on SIGTERM)
-- Authentication or authorization flaws in services built on top of this library's APIs
-- Dependency vulnerabilities in `tss-lib` or other cryptographic dependencies
+- key generation and signing flow correctness
+- unsafe defaults or API behavior that can lead to unauthorized signing in downstream systems
+- key share confidentiality
+- share encryption and decryption
+- key material remaining in memory longer than intended
+- session framing or transport flaws that break protocol integrity
+- vulnerabilities in cryptographic or signing dependencies
+- storage or file handling issues involving share material
 
 ### Out of scope
 
-- Vulnerabilities in infrastructure you control (your HSM, your secrets manager, your network)
-- Theoretical attacks with no practical exploit path
-- DoS / resource exhaustion (unless it leads to key material exposure)
-- Issues in test code or documentation
-
----
+- vulnerabilities in infrastructure outside this repository
+- purely theoretical attacks with no practical exploit path
+- denial of service issues unless they also expose key material
+- documentation or test-only issues without security impact
 
 ## Threat Model
 
-This library assumes:
+This project assumes:
 
-- The **server (MPC Signer)** may be compromised - the design should remain secure
-- The **client (Co-Signer)** may be compromised - the design should remain secure
-- Both parties being simultaneously compromised is outside scope (that is, by design, signing is possible)
-- Network transport is **untrusted** - all communication must be authenticated and encrypted
+- applications embedding this module may run in partially trusted environments
+- the network is untrusted
+- downstream integrations are responsible for deployment-specific authentication, authorization, and key management policy
 
-Vulnerabilities that break the noncustodial guarantee (i.e., allow one party to sign without the other) are **critical severity**.
-
----
+Issues that make unilateral signing easier, break intended threshold assumptions, or expose secret material are critical.
 
 ## Severity Classification
 
-| Severity | Examples |
-|----------|----------|
-| **Critical** | Unilateral signing without co-signer participation; full key reconstruction from one share |
-| **High** | Key share leakage; authentication bypass; Share B persists in memory after zeroing |
-| **Medium** | Side-channel information leakage; insecure defaults in config |
-| **Low** | Minor cryptographic weaknesses; non-exploitable logic errors |
-
----
+| Severity | Examples                                                            |
+| -------- | ------------------------------------------------------------------- |
+| Critical | Private key reconstruction, broken threshold assumptions, or protocol flaws enabling unilateral signing |
+| High     | Key share leakage, unsafe transport or framing behavior, failure to clear sensitive material            |
+| Medium   | Insecure defaults, side-channel leakage with practical impact, misuse-prone API behavior                |
+| Low      | Minor weaknesses without a practical exploit path                                                          |
 
 ## Bug Bounty
 
-We do not currently operate a formal bug bounty program. We offer **public recognition** (Hall of Fame in this repo) and may offer discretionary rewards for critical findings. Contact us to discuss before reporting if this matters to you.
-
----
+We do not currently run a formal bug bounty program. We may offer public recognition or discretionary rewards for significant findings.
 
 ## Hall of Fame
 
-Thank you to the security researchers who have responsibly disclosed vulnerabilities:
-
-*(none yet - be the first)*
+Thank you to the researchers who disclose issues responsibly.

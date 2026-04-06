@@ -1,5 +1,7 @@
 # brosettlement-mpc-core
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 Reusable Go packages for MPC/TSS flows and transport framing.
 
 ## Module

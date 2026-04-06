@@ -13,6 +13,7 @@ This keeps preparams storage, file rotation, and PoC-specific orchestration outs
 - Preserve the current default runtime behavior when no source is provided.
 - Allow two independently constructed services to use different preparams sources without interference.
 - Keep PoC-specific logic, file paths, and storage policy decisions outside core.
+- Remove the legacy expanded constructor and make `NewBnbService` the only public constructor.
 
 ## Non-Goals
 
@@ -46,7 +47,7 @@ func WithShareStore(store ShareStore) ServiceOption
 func WithMetrics(metrics bnbutils.Metrics) ServiceOption
 ```
 
-This change intentionally removes the current legacy expanded constructor in favor of a single option-based API.
+The legacy `NewBnbServiceWithConfigAndShareStoreAndMetrics` constructor is removed in favor of this single option-based API.
 
 ## Internal Design
 
@@ -91,7 +92,7 @@ Add tests covering:
 - service without external source continues using the existing pool path
 - two services can be created with different sources and acquire independently
 - default `NewBnbService(logger)` preserves current behavior when no options are supplied
-- option-based construction can still provide config, share store, and metrics without the removed legacy constructor
+- option-based construction can provide config, share store, and metrics after removal of the legacy constructor
 
 ## Risks
 

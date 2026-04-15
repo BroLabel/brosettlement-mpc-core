@@ -25,13 +25,10 @@ type Runner interface {
 }
 
 type DKGPersistInput struct {
-	SessionID         string
-	OrgID             string
-	Algorithm         string
-	Curve             string
-	EmptyKeyErr       error
-	MissingPublicKey  error
-	MissingAddressErr error
+	KeyID     string
+	OrgID     string
+	Algorithm string
+	Curve     string
 }
 
 type SignPrepareInput struct {
@@ -47,21 +44,11 @@ type DerivedECDSAOutput struct {
 	Address   string
 }
 
-func PersistShareAfterDKG(ctx context.Context, store ShareStore, runner Runner, in DKGPersistInput) error {
-	keyID, err := tssutils.NormalizeKeyID(in.SessionID, in.EmptyKeyErr)
-	if err != nil {
-		return err
-	}
-	share, err := runner.ExportECDSAKeyShare(keyID)
-	if err != nil {
-		return err
-	}
-	defer runner.DeleteECDSAKeyShare(keyID)
-
+func PersistShareAfterDKG(ctx context.Context, store ShareStore, share ecdsakeygen.LocalPartySaveData, in DKGPersistInput) error {
 	blob, err := coreshares.MarshalShare(share)
 	if err == nil {
 		defer tssutils.ZeroBytes(blob)
-		err = store.SaveShare(ctx, keyID, blob, tssutils.DKGShareMeta(keyID, in.OrgID, in.Algorithm, in.Curve))
+		err = store.SaveShare(ctx, in.KeyID, blob, tssutils.DKGShareMeta(in.KeyID, in.OrgID, in.Algorithm, in.Curve))
 	}
 	return err
 }
@@ -105,15 +92,6 @@ func DeriveECDSAOutputFromShare(share ecdsakeygen.LocalPartySaveData, missingPub
 		PublicKey: pub,
 		Address:   address,
 	}, nil
-}
-
-func EnsureDKGMetadata(runner Runner, sessionID string, missingPublicKeyErr, missingAddressErr error) error {
-	share, err := runner.ExportECDSAKeyShare(sessionID)
-	if err != nil {
-		return err
-	}
-	_, err = DeriveECDSAOutputFromShare(share, missingPublicKeyErr, missingAddressErr)
-	return err
 }
 
 func ValidateLoadedMeta(keyID, orgID, algorithm string, meta coreshares.ShareMeta, metadataMismatchErr error) error {

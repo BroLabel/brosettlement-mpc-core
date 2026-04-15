@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"testing"
 
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
 	"github.com/bnb-chain/tss-lib/common"
@@ -147,6 +149,41 @@ func (s *stubPreParamsSource) Acquire(context.Context) (*ecdsakeygen.LocalPrePar
 	return s.preParams, nil
 }
 
+type recordingShareStore struct {
+	savedKeyID string
+	savedBlob  []byte
+	savedMeta  coreshares.ShareMeta
+	runner     *stubRunner
+	sessionID  string
+}
+
+func (s *recordingShareStore) SaveShare(_ context.Context, keyID string, blob []byte, meta coreshares.ShareMeta) error {
+	s.runner.events = append(s.runner.events, "persist:"+keyID)
+	if _, ok := s.runner.shareByKey[s.sessionID]; !ok {
+		return errors.New("share cleaned before persist")
+	}
+	s.savedKeyID = keyID
+	s.savedBlob = append([]byte(nil), blob...)
+	s.savedMeta = meta
+	return nil
+}
+
+func (s *recordingShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
+	return nil, coreshares.ErrShareNotFound
+}
+
+type failingShareStore struct {
+	err error
+}
+
+func (s *failingShareStore) SaveShare(context.Context, string, []byte, coreshares.ShareMeta) error {
+	return s.err
+}
+
+func (s *failingShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
+	return nil, coreshares.ErrShareNotFound
+}
+
 func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	t.Parallel()
 
@@ -240,6 +277,110 @@ func TestRunDKGSession_ReturnsOutputBeforeCleanup(t *testing.T) {
 	}
 	if out.PublicKey == "" || out.Address == "" {
 		t.Fatalf("expected populated output, got %+v", out)
+	}
+	if len(runner.deletedKeys) != 0 {
+		t.Fatalf("expected no cleanup without store, got %+v", runner.deletedKeys)
+	}
+}
+
+func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
+	runner := newECDSAStubRunner(t, "session-1")
+	store := &recordingShareStore{runner: runner, sessionID: "session-1"}
+	logger := newTestLogger()
+	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
+	svc := New(runner, logger, internalPool, store)
+
+	out, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "session-1",
+		KeyID:        "key-1",
+		LocalPartyID: "p1",
+		OrgID:        "org",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		MissingPub:   errMissingPublicKey,
+		MissingAddr:  errMissingAddress,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession returned error: %v", err)
+	}
+	if out.KeyID != "key-1" {
+		t.Fatalf("expected key id key-1, got %q", out.KeyID)
+	}
+	if len(store.savedBlob) == 0 {
+		t.Fatal("expected share to be persisted")
+	}
+	wantEvents := []string{"export:session-1", "persist:key-1", "cleanup:session-1"}
+	if !reflect.DeepEqual(runner.events, wantEvents) {
+		t.Fatalf("expected events %v, got %v", wantEvents, runner.events)
+	}
+	if len(runner.deletedKeys) != 1 || runner.deletedKeys[0] != "session-1" {
+		t.Fatalf("expected session share cleanup, got %+v", runner.deletedKeys)
+	}
+}
+
+func TestRunDKGSession_PersistFailureKeepsRunnerShare(t *testing.T) {
+	runner := newECDSAStubRunner(t, "session-1")
+	store := &failingShareStore{err: errPersistFailed}
+	logger := newTestLogger()
+	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
+	svc := New(runner, logger, internalPool, store)
+
+	out, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "session-1",
+		KeyID:        "key-1",
+		LocalPartyID: "p1",
+		OrgID:        "org",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		MissingPub:   errMissingPublicKey,
+		MissingAddr:  errMissingAddress,
+	})
+	if !errors.Is(err, errPersistFailed) {
+		t.Fatalf("expected persist failure, got %v", err)
+	}
+	if out != (DKGOutput{}) {
+		t.Fatalf("expected zero output on persist failure, got %+v", out)
+	}
+	if _, ok := runner.shareByKey["session-1"]; !ok {
+		t.Fatal("expected runner share to remain after persist failure")
+	}
+	if len(runner.deletedKeys) != 0 {
+		t.Fatalf("expected no cleanup on persist failure, got %+v", runner.deletedKeys)
+	}
+}
+
+func TestRunDKGThenSign_NoStoreKeepsRunnerShare(t *testing.T) {
+	runner := newECDSAStubRunner(t, "key-1")
+	runner.requireShareForSign = true
+	logger := newTestLogger()
+	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
+	svc := New(runner, logger, internalPool, nil)
+
+	if _, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "key-1",
+		KeyID:        "key-1",
+		LocalPartyID: "p1",
+		OrgID:        "org",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		MissingPub:   errMissingPublicKey,
+		MissingAddr:  errMissingAddress,
+	}); err != nil {
+		t.Fatalf("RunDKGSession returned error: %v", err)
+	}
+	if err := svc.RunSignSession(context.Background(), SignInput{
+		SessionID:    "sign-1",
+		KeyID:        "key-1",
+		LocalPartyID: "p1",
+		OrgID:        "org",
+		Parties:      []string{"p1", "p2"},
+		Digest:       []byte{1, 2, 3},
+		Algorithm:    "ecdsa",
+	}); err != nil {
+		t.Fatalf("expected in-memory sign to keep working, got %v", err)
 	}
 	if len(runner.deletedKeys) != 0 {
 		t.Fatalf("expected no cleanup without store, got %+v", runner.deletedKeys)

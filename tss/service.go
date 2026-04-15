@@ -173,6 +173,9 @@ func (s *Service) Snapshot() Snapshot {
 }
 
 func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error) {
+	if err := validateDKGKeyIDMatch(req.Session); err != nil {
+		return DKGOutput{}, err
+	}
 	out, err := s.impl.RunDKGSession(ctx, tssservice.DKGInput{
 		SessionID:    req.Session.SessionID,
 		LocalPartyID: req.LocalPartyID,
@@ -189,7 +192,7 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 		MissingAddr:  ErrMissingDKGAddress,
 	})
 	if err != nil {
-		return DKGOutput{}, err
+		return DKGOutput{}, mapDKGOutputError(err)
 	}
 	return DKGOutput{
 		KeyID:     out.KeyID,

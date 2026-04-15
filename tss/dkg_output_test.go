@@ -97,3 +97,44 @@ func TestReadDKGOutput_PublicFacadeRejectsNonECDSA(t *testing.T) {
 		t.Fatalf("expected ErrUnsupportedDKGOutputAlgorithm, got %v", err)
 	}
 }
+
+func TestRunDKGSession_PublicFacadeRejectsMismatchedECDSAKeyID(t *testing.T) {
+	svc := newService(&stubPublicRunner{share: makePublicTestECDSAShare(t)}, slog.Default(), &stubFacadePool{}, nil, nil)
+
+	_, err := svc.RunDKGSession(context.Background(), DKGSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "session-1",
+			OrgID:     "org-1",
+			KeyID:     "other-key",
+			Parties:   []string{"p1", "p2"},
+			Threshold: 1,
+			Algorithm: "ecdsa",
+			Chain:     "tron",
+		},
+		LocalPartyID: "p1",
+		Transport:    noopTransport{},
+	})
+	if !errors.Is(err, ErrDKGKeyIDMismatch) {
+		t.Fatalf("expected ErrDKGKeyIDMismatch, got %v", err)
+	}
+}
+
+func TestRunDKGSession_PublicFacadeMapsUnsupportedChain(t *testing.T) {
+	svc := newService(&stubPublicRunner{share: makePublicTestECDSAShare(t)}, slog.Default(), &stubFacadePool{}, nil, nil)
+
+	_, err := svc.RunDKGSession(context.Background(), DKGSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "session-1",
+			OrgID:     "org-1",
+			Parties:   []string{"p1", "p2"},
+			Threshold: 1,
+			Algorithm: "ecdsa",
+			Chain:     "ethereum",
+		},
+		LocalPartyID: "p1",
+		Transport:    noopTransport{},
+	})
+	if !errors.Is(err, ErrUnsupportedDKGOutputChain) {
+		t.Fatalf("expected ErrUnsupportedDKGOutputChain, got %v", err)
+	}
+}

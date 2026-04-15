@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/elliptic"
 	"encoding/hex"
+	"errors"
 	"strings"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
@@ -83,6 +84,9 @@ func DeriveECDSAOutputFromShare(share ecdsakeygen.LocalPartySaveData, missingPub
 	}
 	address, err := tssbnbutils.ECDSAAddressFromShare(share)
 	if err != nil {
+		if errors.Is(err, tssbnbutils.ErrECDSAPubKeyUnavailable) && missingAddressErr != nil {
+			return DerivedECDSAOutput{}, missingAddressErr
+		}
 		return DerivedECDSAOutput{}, err
 	}
 	if strings.TrimSpace(address) == "" {

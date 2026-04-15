@@ -73,6 +73,17 @@ func TestNewBnbServiceReturnsFacade(t *testing.T) {
 	}
 }
 
+func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {
+	got := DKGOutput{
+		KeyID:     "key-1",
+		PublicKey: "04abcd",
+		Address:   "T...",
+	}
+	if got.KeyID == "" || got.PublicKey == "" || got.Address == "" {
+		t.Fatalf("expected populated facade output, got %+v", got)
+	}
+}
+
 type stubShareStore struct{}
 
 func (stubShareStore) SaveShare(_ context.Context, _ string, _ []byte, _ coreshares.ShareMeta) error {

@@ -12,6 +12,7 @@ import (
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
+	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
 	"github.com/bnb-chain/tss-lib/common"
 	"github.com/bnb-chain/tss-lib/crypto"
@@ -285,7 +286,7 @@ func TestRunDKGSession_ReturnsMissingPublicKeyError(t *testing.T) {
 	}
 }
 
-func TestRunDKGSession_ReturnsMissingAddressError(t *testing.T) {
+func TestRunDKGSession_ReturnsRawAddressDerivationError(t *testing.T) {
 	runner := &stubRunner{
 		shareByKey: map[string]ecdsakeygen.LocalPartySaveData{
 			"session-1": newECDSATestShareWithCurve(t, elliptic.P224()),
@@ -305,8 +306,8 @@ func TestRunDKGSession_ReturnsMissingAddressError(t *testing.T) {
 		MissingPub:   errMissingPublicKey,
 		MissingAddr:  errMissingAddress,
 	})
-	if !errors.Is(err, errMissingAddress) {
-		t.Fatalf("expected missing address error, got %v", err)
+	if !errors.Is(err, tssbnbutils.ErrECDSAPubKeyUnavailable) {
+		t.Fatalf("expected raw address derivation error, got %v", err)
 	}
 	if out != (DKGOutput{}) {
 		t.Fatalf("expected zero output on error, got %+v", out)

@@ -4,7 +4,7 @@
 
 The core service must provide a reliable way to obtain `DKGOutput { KeyID, PublicKey, Address }` after a successful ECDSA DKG run, including when `shareStore` is configured and the in-memory runner share is deleted after persistence.
 
-`RunDKGSession` is the primary contract and should return `DKGOutput` directly on success. `ReadDKGOutput` is a recovery, replay, and fallback path that reconstructs the same output from the same source-of-truth selection rules.
+`RunDKGSession` is the primary contract and should return `DKGOutput` directly on success for ECDSA DKG. `ReadDKGOutput` is a recovery, replay, and fallback path that reconstructs the same output from the same source-of-truth selection rules.
 
 The result-building logic stays inside core. External callers such as `mpc-co-signer` must not parse share blobs, derive public keys or addresses, or import anything from `internal/...`.
 
@@ -26,6 +26,14 @@ This creates an invalid contract for downstream callers. The core service must o
 - Use runner state as the source of truth only when `shareStore == nil`.
 - Keep share parsing and derivation logic inside core.
 - Avoid any public dependency on `internal/...`.
+
+## Scope
+
+This design is ECDSA-specific.
+
+`DKGOutput` is defined only for the ECDSA path described in the problem statement. `RunDKGSession` continues to execute non-ECDSA DKG exactly as it does today, but output derivation is not attempted for those algorithms and the method returns a zero-value `DKGOutput` together with the underlying DKG execution result.
+
+If core later needs derived post-DKG output for another algorithm, that behavior should be designed explicitly instead of being inferred from the ECDSA contract in this document.
 
 ## Non-Goals
 
@@ -52,6 +60,12 @@ Make DKG return the output directly:
 RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error)
 ```
 
+For ECDSA DKG, `req.Session.SessionID` is the only canonical source of `KeyID`. `req.Session.KeyID` does not participate in persistence, lookup, or output derivation.
+
+For ECDSA DKG, `req.Session.KeyID` must therefore be either empty or equal to `req.Session.SessionID` after normalization. A mismatch is an invalid request and should fail validation instead of being tolerated silently.
+
+For non-ECDSA algorithms, `RunDKGSession` returns the existing DKG execution result and a zero-value `DKGOutput`. No post-DKG output derivation is attempted on that path.
+
 Add a recovery and replay API with metadata-validation context:
 
 ```go
@@ -59,19 +73,24 @@ type ReadDKGOutputInput struct {
     SessionID string
     OrgID     string
     Algorithm string
+    Chain     string
 }
 
 ReadDKGOutput(ctx context.Context, in ReadDKGOutputInput) (DKGOutput, error)
 ```
 
+For non-ECDSA algorithms, `ReadDKGOutput` returns a zero-value `DKGOutput` and does not attempt persisted-share or runner-state reads.
+
 Add public share-derivation helpers in the `tss` package:
 
 ```go
 ExtractECDSAPublicKey(share ecdsakeygen.LocalPartySaveData) (string, error)
-ECDSAAddressFromShare(share ecdsakeygen.LocalPartySaveData) (string, error)
+ECDSAAddressFromShare(chain string, share ecdsakeygen.LocalPartySaveData) (string, error)
 ```
 
 These helpers expose reusable derivation primitives but do not embed orchestration semantics such as `sessionID -> keyID` mapping or source selection.
+
+`Chain` is an explicit address-derivation selector, not part of persisted-share identity. Unsupported chain values must return a typed public error instead of silently defaulting to some address format.
 
 ## Design
 
@@ -80,8 +99,10 @@ These helpers expose reusable derivation primitives but do not embed orchestrati
 Introduce a single internal builder in the service/orchestration layer that is responsible for:
 
 - deriving `KeyID` as `NormalizeKeyID(sessionID)`
+- treating `SessionID`, not request `KeyID`, as the canonical ECDSA identity
 - choosing the correct source of truth
 - validating share metadata when reading persisted data
+- carrying chain context into address derivation
 - deriving `PublicKey` and `Address`
 - mapping missing or invalid data to the expected public errors
 
@@ -104,10 +125,12 @@ When `shareStore != nil`, the builder:
 2. Loads the stored share by `keyID`.
 3. Validates share metadata against `orgID` and `algorithm`.
 4. Unmarshals the share blob.
-5. Derives `PublicKey` and `Address` from the unmarshaled share.
+5. Derives `PublicKey` and chain-specific `Address` from the unmarshaled share.
 6. Returns `DKGOutput`.
 
 The metadata validation must use the same semantic contract already used by the sign flow. A metadata mismatch returns `ErrMetadataMismatch`.
+
+`Chain` is not part of this metadata validation. In the current design, persisted share identity is defined by `keyID`, `orgID`, and `algorithm`, while `Chain` only selects how `Address` is derived from the same ECDSA key material.
 
 ### Runner-State Path
 
@@ -115,7 +138,7 @@ When `shareStore == nil`, the builder:
 
 1. Normalizes `keyID` from `sessionID`.
 2. Reads the in-memory share from the runner by `keyID`.
-3. Derives `PublicKey` and `Address` from that share.
+3. Derives `PublicKey` and chain-specific `Address` from that share.
 4. Returns `DKGOutput`.
 
 No persisted-share validation occurs on this path because the share store is not in use.
@@ -125,6 +148,7 @@ No persisted-share validation occurs on this path because the share store is not
 For successful ECDSA DKG:
 
 - `RunDKGSession` executes DKG as it does today.
+- It treats `SessionID` as the canonical ECDSA key identity and rejects mismatched `req.Session.KeyID` during request validation.
 - If `shareStore != nil`, it persists the share and clears the runner-held share.
 - It then calls the single builder and returns the resulting `DKGOutput`.
 
@@ -135,6 +159,23 @@ For successful ECDSA DKG without share persistence:
 - It returns `DKGOutput`.
 
 The existing separate `EnsureDKGMetadata(...)` post-run check should be removed or folded into the builder so there is no second, competing post-DKG contract.
+
+For successful non-ECDSA DKG:
+
+- `RunDKGSession` preserves the existing DKG execution behavior.
+- It does not attempt to construct `DKGOutput`.
+- It returns a zero-value `DKGOutput` and the DKG execution result.
+
+### Partial-Success Semantics
+
+For ECDSA, `RunDKGSession` performs two logical stages:
+
+1. execute DKG and commit any resulting share state
+2. build `DKGOutput` from the selected source of truth
+
+If stage 1 succeeds but stage 2 fails, `RunDKGSession` returns an error even though DKG itself has already completed successfully. In that case the caller must treat the error as an output-readback failure, not as evidence that the DKG session should be re-run.
+
+The supported recovery path for that situation is `ReadDKGOutput(...)` with the same session context. Callers should use it to re-read the persisted or in-memory result rather than starting a second DKG for the same logical session.
 
 ## Read Path
 
@@ -149,7 +190,9 @@ Its source selection must match `RunDKGSession` exactly:
 - persisted share only when `shareStore != nil`
 - runner state only when `shareStore == nil`
 
-`SessionID` is the primary identifier and the source of `KeyID`. `OrgID` and `Algorithm` exist to validate persisted-share metadata before returning a result.
+For non-ECDSA algorithms, `ReadDKGOutput` is a no-op read path that returns a zero-value `DKGOutput` without touching persisted share or runner state.
+
+`SessionID` is the primary identifier and the source of `KeyID`. `OrgID` and `Algorithm` exist to validate persisted-share metadata before returning a result. `Chain` exists because `Address` derivation is chain-dependent and must not silently assume a hard-coded address format, but it is not part of persisted-share metadata identity in this design.
 
 ## Error Semantics
 
@@ -161,15 +204,20 @@ The following mappings should be preserved and made explicit:
 - missing share maps to a typed not-found error
 - corrupt share blob maps to `ErrInvalidSharePayload`
 - unsupported share version maps to `ErrUnsupportedVersion`
+- unsupported chain maps to a typed public unsupported-chain error
+- non-ECDSA DKG does not produce derived `DKGOutput`; callers receive a zero-value output and the normal DKG execution result
 
 If public derivation helpers need additional internal errors, they should map those errors at the service boundary so callers of `RunDKGSession` and `ReadDKGOutput` see stable public errors.
 
 ## Implementation Notes
 
 - Reuse the existing `NormalizeKeyID` helper for `KeyID` derivation.
+- Extend ECDSA DKG request validation so `SessionDescriptor.KeyID`, when present, must match canonical `SessionID` semantics instead of creating an alternate lookup key.
 - Reuse the existing metadata validation logic for persisted-share reads.
 - Lift ECDSA public-key extraction into public `tss` API instead of leaving it in `internal/tss/runtime`.
 - Lift ECDSA address derivation from share into public `tss` API instead of leaving it only in `internal/tssbnb/utils`.
+- Thread `Chain` through the ECDSA output builder and public address helper so address derivation remains explicit and deterministic.
+- Do not add `Chain` to persisted share metadata in this scope; chain influences address derivation only.
 - Keep blob parsing and share unmarshaling inside core service flow and public core helpers, not in callers.
 
 ## Testing
@@ -179,10 +227,16 @@ Add tests for:
 - successful `RunDKGSession` with `shareStore != nil`, proving the output builder reads persisted share and does not depend on runner state after persistence and cleanup
 - successful `RunDKGSession` with `shareStore == nil`, proving the output is built from runner state
 - successful `ReadDKGOutput` with `shareStore != nil`
+- ECDSA DKG request validation rejects mismatched `SessionID` and `SessionDescriptor.KeyID`
+- successful non-ECDSA `RunDKGSession`, proving it returns a zero-value `DKGOutput` and does not invoke the ECDSA output builder
+- successful non-ECDSA `ReadDKGOutput`, proving it returns a zero-value `DKGOutput` and does not invoke persisted-share or runner reads
 - metadata mismatch on persisted share returning `ErrMetadataMismatch`
 - missing share returning a typed not-found error
 - corrupt share blob returning `ErrInvalidSharePayload`
 - unsupported share version returning `ErrUnsupportedVersion`
+- chain-aware address derivation coverage for `RunDKGSession` and `ReadDKGOutput`
+- unsupported chain returning the typed public error rather than a silently defaulted address format
+- partial-success behavior where DKG completes but `RunDKGSession` returns an output-readback error and `ReadDKGOutput` is the documented recovery step
 - no regression in sign flow when persisted share is loaded for signing
 - targeted public-helper tests for `ExtractECDSAPublicKey` and `ECDSAAddressFromShare`
 
@@ -197,6 +251,15 @@ Mitigation: expose only derivation primitives, not a public builder that mixes d
 Risk: error mapping could diverge between primary and recovery paths.
 Mitigation: both paths must call the same builder and assert on the same test expectations.
 
+Risk: callers may treat output-readback failure as DKG failure and accidentally re-run the same logical session.
+Mitigation: document partial-success semantics explicitly and require recovery through `ReadDKGOutput(...)`.
+
+Risk: address derivation could silently lock the API to one chain format.
+Mitigation: carry `Chain` explicitly through read/output derivation contracts and tests.
+
+Risk: ambiguous `SessionDescriptor.KeyID` could create divergence between persisted lookup and readback identity.
+Mitigation: make `SessionID` canonical for ECDSA and reject mismatched request `KeyID` values during validation.
+
 ## Decision
 
-Adopt a single internal DKG output builder inside core. Make `RunDKGSession` return `DKGOutput` as the primary contract. Add `ReadDKGOutput` with `SessionID`, `OrgID`, and `Algorithm` as the recovery and replay contract. Use persisted share as the sole source of truth when `shareStore != nil`, and runner state only when `shareStore == nil`.
+Adopt a single internal DKG output builder inside core for ECDSA. Make `RunDKGSession` return `DKGOutput` as the primary ECDSA contract and return a zero-value output for non-ECDSA algorithms. Add `ReadDKGOutput` with `SessionID`, `OrgID`, `Algorithm`, and `Chain` as the recovery and replay contract. Use persisted share as the sole source of truth when `shareStore != nil`, and runner state only when `shareStore == nil`.

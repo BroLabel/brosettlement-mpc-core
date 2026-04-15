@@ -18,10 +18,8 @@ type ShareStore interface {
 }
 
 type Runner interface {
-	ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error)
 	ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData)
 	DeleteECDSAKeyShare(key string)
-	ECDSAAddress(key string) (string, error)
 }
 
 type DKGPersistInput struct {

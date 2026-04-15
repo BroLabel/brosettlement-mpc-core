@@ -4,12 +4,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 	tssrequests "github.com/BroLabel/brosettlement-mpc-core/internal/tss/requests"
+	tssruntime "github.com/BroLabel/brosettlement-mpc-core/internal/tss/runtime"
 	tssservice "github.com/BroLabel/brosettlement-mpc-core/internal/tss/service"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
+	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
@@ -168,8 +172,8 @@ func (s *Service) Snapshot() Snapshot {
 	return s.impl.Snapshot()
 }
 
-func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) error {
-	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
+func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error) {
+	out, err := s.impl.RunDKGSession(ctx, tssservice.DKGInput{
 		SessionID:    req.Session.SessionID,
 		LocalPartyID: req.LocalPartyID,
 		OrgID:        req.Session.OrgID,
@@ -184,6 +188,37 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) erro
 		MissingPub:   ErrMissingDKGPublicKey,
 		MissingAddr:  ErrMissingDKGAddress,
 	})
+	if err != nil {
+		return DKGOutput{}, err
+	}
+	return DKGOutput{
+		KeyID:     out.KeyID,
+		PublicKey: out.PublicKey,
+		Address:   out.Address,
+	}, nil
+}
+
+func (s *Service) ReadDKGOutput(ctx context.Context, in ReadDKGOutputInput) (DKGOutput, error) {
+	out, err := s.impl.ReadDKGOutput(ctx, tssservice.ReadDKGOutputInput{
+		SessionID:           in.SessionID,
+		OrgID:               in.OrgID,
+		Algorithm:           in.Algorithm,
+		Chain:               in.Chain,
+		EmptyKeyErr:         ErrShareNotFound,
+		MissingPublicKey:    ErrMissingDKGPublicKey,
+		MissingAddressErr:   ErrMissingDKGAddress,
+		MetadataMismatch:    ErrMetadataMismatch,
+		UnsupportedAlgErr:   ErrUnsupportedDKGOutputAlgorithm,
+		UnsupportedChainErr: ErrUnsupportedDKGOutputChain,
+	})
+	if err != nil {
+		return DKGOutput{}, mapDKGOutputError(err)
+	}
+	return DKGOutput{
+		KeyID:     out.KeyID,
+		PublicKey: out.PublicKey,
+		Address:   out.Address,
+	}, nil
 }
 
 func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) error {
@@ -234,7 +269,7 @@ func isValidSessionDescriptor(session SessionDescriptor) bool {
 }
 
 func (r DKGSessionRequest) Validate() error {
-	return tssrequests.ValidateDKG(tssrequests.DKGRequest{
+	if err := tssrequests.ValidateDKG(tssrequests.DKGRequest{
 		Session: tssrequests.SessionDescriptor{
 			SessionID: r.Session.SessionID,
 			OrgID:     r.Session.OrgID,
@@ -244,7 +279,10 @@ func (r DKGSessionRequest) Validate() error {
 		},
 		LocalPartyID: r.LocalPartyID,
 		HasTransport: r.Transport != nil,
-	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrTransportRequired)
+	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrTransportRequired); err != nil {
+		return err
+	}
+	return validateDKGKeyIDMatch(r.Session)
 }
 
 func (r SignSessionRequest) Validate() error {
@@ -260,4 +298,28 @@ func (r SignSessionRequest) Validate() error {
 		Digest:       r.Digest,
 		HasTransport: r.Transport != nil,
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrKeyIDRequired, ErrDigestMissing, ErrTransportRequired)
+}
+
+func validateDKGKeyIDMatch(session SessionDescriptor) error {
+	if !tssutils.IsECDSA(session.Algorithm) {
+		return nil
+	}
+	if strings.TrimSpace(session.KeyID) == "" {
+		return nil
+	}
+	if strings.TrimSpace(session.KeyID) != strings.TrimSpace(session.SessionID) {
+		return ErrDKGKeyIDMismatch
+	}
+	return nil
+}
+
+func mapDKGOutputError(err error) error {
+	switch {
+	case errors.Is(err, tssruntime.ErrUnsupportedDKGOutputChain):
+		return ErrUnsupportedDKGOutputChain
+	case errors.Is(err, coreshares.ErrMetadataMismatch):
+		return ErrMetadataMismatch
+	default:
+		return err
+	}
 }

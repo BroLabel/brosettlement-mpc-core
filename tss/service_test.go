@@ -38,6 +38,26 @@ func TestDKGSessionRequestValidateRequiresTransport(t *testing.T) {
 	}
 }
 
+func TestDKGSessionRequestValidateRejectsMismatchedECDSAKeyID(t *testing.T) {
+	req := DKGSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "session-1",
+			OrgID:     "org-1",
+			KeyID:     "other-key",
+			Parties:   []string{"p1", "p2"},
+			Threshold: 1,
+			Algorithm: "ecdsa",
+		},
+		LocalPartyID: "p1",
+		Transport:    noopTransport{},
+	}
+
+	err := req.Validate()
+	if !errors.Is(err, ErrDKGKeyIDMismatch) {
+		t.Fatalf("expected ErrDKGKeyIDMismatch, got %v", err)
+	}
+}
+
 func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 	req := SignSessionRequest{
 		Session: SessionDescriptor{

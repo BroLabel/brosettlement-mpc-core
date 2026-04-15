@@ -118,6 +118,7 @@ type dkgOutputRunner struct {
 	keyShares        map[string]ecdsakeygen.LocalPartySaveData
 	signatures       map[string]common.SignatureData
 	lastSignKeyID    string
+	deleteCalls      int
 	exportShareCalls int
 }
 
@@ -167,6 +168,7 @@ func (r *dkgOutputRunner) ImportECDSAKeyShare(key string, data ecdsakeygen.Local
 }
 
 func (r *dkgOutputRunner) DeleteECDSAKeyShare(key string) {
+	r.deleteCalls++
 	delete(r.keyShares, key)
 }
 
@@ -431,5 +433,80 @@ func TestRunDKGSession_NonECDSAReturnsZeroOutput(t *testing.T) {
 	}
 	if out != (DKGOutput{}) {
 		t.Fatalf("expected zero output, got %+v", out)
+	}
+}
+
+func TestRunSignSession_LoadsPersistedShareBeforeSign(t *testing.T) {
+	share := makeTestECDSAShare(t)
+	store := newMemoryShareStoreWithShare(t, "key-sign-1", "org-1", "ecdsa", share)
+	runner := newDKGOutputRunner(share)
+	svc := New(runner, testLogger(t), &stubLifecyclePool{}, store)
+
+	err := svc.RunSignSession(context.Background(), SignInput{
+		SessionID:        "sign-session-1",
+		LocalPartyID:     "p1",
+		OrgID:            "org-1",
+		KeyID:            "key-sign-1",
+		Parties:          []string{"p1", "p2"},
+		Digest:           []byte{0x01, 0x02, 0x03},
+		Algorithm:        "ecdsa",
+		Chain:            "tron",
+		EmptyKeyErr:      errEmptyKey,
+		MetadataMismatch: errMetadataMismatch,
+	})
+	if err != nil {
+		t.Fatalf("RunSignSession() err = %v", err)
+	}
+	if store.loadCalls != 1 {
+		t.Fatalf("expected store.LoadShare once, got %d", store.loadCalls)
+	}
+	if runner.lastSignKeyID != "key-sign-1" {
+		t.Fatalf("expected sign to run with loaded key id, got %q", runner.lastSignKeyID)
+	}
+	if runner.deleteCalls == 0 {
+		t.Fatal("expected cleanup to delete imported key share after sign")
+	}
+	if _, err := runner.ExportECDSAKeyShare("key-sign-1"); err == nil {
+		t.Fatal("expected sign cleanup to clear runner-held key share")
+	}
+}
+
+func TestReadDKGOutput_RunnerModeFailsAfterShareIsCleared(t *testing.T) {
+	share := makeTestECDSAShare(t)
+	runner := newDKGOutputRunner(share)
+	svc := New(runner, testLogger(t), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil)
+
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "runner-only-session",
+		LocalPartyID: "p1",
+		OrgID:        "org-1",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		Chain:        "tron",
+		EmptyKeyErr:  errEmptyKey,
+		MissingPub:   errMissingPub,
+		MissingAddr:  errMissingAddr,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession() err = %v", err)
+	}
+
+	runner.DeleteECDSAKeyShare("runner-only-session")
+
+	_, err = svc.ReadDKGOutput(context.Background(), ReadDKGOutputInput{
+		SessionID:           "runner-only-session",
+		OrgID:               "org-1",
+		Algorithm:           "ecdsa",
+		Chain:               "tron",
+		EmptyKeyErr:         errEmptyKey,
+		MissingPublicKey:    errMissingPub,
+		MissingAddressErr:   errMissingAddr,
+		MetadataMismatch:    errMetadataMismatch,
+		UnsupportedAlgErr:   errUnsupportedAlg,
+		UnsupportedChainErr: errUnsupportedChain,
+	})
+	if err == nil {
+		t.Fatal("expected read to fail after runner share cleanup in no-store mode")
 	}
 }

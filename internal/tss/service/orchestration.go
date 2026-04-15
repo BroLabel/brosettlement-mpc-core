@@ -70,6 +70,12 @@ type DKGInput struct {
 	MissingAddr  error
 }
 
+type DKGOutput struct {
+	KeyID     string
+	PublicKey string
+	Address   string
+}
+
 type SignInput struct {
 	SessionID        string
 	LocalPartyID     string
@@ -126,7 +132,7 @@ func (s *Service) Snapshot() Snapshot {
 	return BuildSnapshot(s.preParamsPool, provider)
 }
 
-func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
+func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
 	job := tssbnbrunner.DKGJob{
 		SessionID:    in.SessionID,
 		LocalPartyID: in.LocalPartyID,
@@ -144,11 +150,19 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
 	started := time.Now()
-	err := AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
-	if err == nil {
-		err = s.runner.RunDKG(ctx, job, in.Transport)
+	logEnd := func(err error) {
+		tsslogging.LogSessionEnd(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID, started, err)
 	}
-	if err == nil && s.shareStore != nil && tssutils.IsECDSA(job.Algorithm) {
+	err := AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
+	if err != nil {
+		logEnd(err)
+		return DKGOutput{}, err
+	}
+	if err = s.runner.RunDKG(ctx, job, in.Transport); err != nil {
+		logEnd(err)
+		return DKGOutput{}, err
+	}
+	if s.shareStore != nil && tssutils.IsECDSA(job.Algorithm) {
 		err = tssruntime.PersistShareAfterDKG(ctx, s.shareStore, s.runner, tssruntime.DKGPersistInput{
 			SessionID:         job.SessionID,
 			OrgID:             job.OrgID,
@@ -158,12 +172,23 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
 			MissingPublicKey:  in.MissingPub,
 			MissingAddressErr: in.MissingAddr,
 		})
+		if err != nil {
+			logEnd(err)
+			return DKGOutput{}, err
+		}
 	}
-	if err == nil && tssutils.IsECDSA(job.Algorithm) {
+	if tssutils.IsECDSA(job.Algorithm) {
 		err = tssruntime.EnsureDKGMetadata(s.runner, in.SessionID, in.MissingPub, in.MissingAddr)
+		if err != nil {
+			logEnd(err)
+			return DKGOutput{}, err
+		}
 	}
-	tsslogging.LogSessionEnd(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID, started, err)
-	return err
+	output := DKGOutput{
+		KeyID: keyID,
+	}
+	logEnd(nil)
+	return output, nil
 }
 
 func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {

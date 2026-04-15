@@ -66,6 +66,11 @@ func TestNewBnbServiceReturnsFacade(t *testing.T) {
 	if got := svc.Snapshot(); got != (Snapshot{}) {
 		t.Fatalf("expected zero-value snapshot, got %+v", got)
 	}
+
+	var zero DKGOutput
+	if zero != (DKGOutput{}) {
+		t.Fatalf("expected zero-value output type, got %+v", zero)
+	}
 }
 
 type stubShareStore struct{}

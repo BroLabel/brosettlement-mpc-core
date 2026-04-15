@@ -66,6 +66,7 @@ type preParamsSnapshotProvider interface {
 }
 
 type Snapshot = tssservice.Snapshot
+type DKGOutput = tssservice.DKGOutput
 
 var ErrNilRunner = tssservice.ErrNilRunner
 
@@ -168,7 +169,7 @@ func (s *Service) Snapshot() Snapshot {
 	return s.impl.Snapshot()
 }
 
-func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) error {
+func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error) {
 	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
 		SessionID:    req.Session.SessionID,
 		LocalPartyID: req.LocalPartyID,

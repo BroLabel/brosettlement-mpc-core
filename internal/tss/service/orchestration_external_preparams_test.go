@@ -82,7 +82,7 @@ func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := New(runner, logger, internalPool, nil, externalSource)
 
-	err := svc.RunDKGSession(context.Background(), DKGInput{
+	output, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-1",
 		LocalPartyID: "p1",
 		OrgID:        "org",
@@ -92,6 +92,9 @@ func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
+	}
+	if output.KeyID != "session-1" {
+		t.Fatalf("expected key id to default to session id, got %q", output.KeyID)
 	}
 	if runner.lastDKGJob.ECDSAPreParams != externalSource.preParams {
 		t.Fatalf("expected external source preparams to be attached")
@@ -112,7 +115,7 @@ func TestRunDKGSession_UsesInternalPoolWhenExternalPreParamsSourceMissing(t *tes
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := New(runner, logger, internalPool, nil)
 
-	err := svc.RunDKGSession(context.Background(), DKGInput{
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-2",
 		LocalPartyID: "p1",
 		OrgID:        "org",

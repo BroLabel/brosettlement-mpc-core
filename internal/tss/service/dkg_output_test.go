@@ -308,3 +308,128 @@ func TestReadDKGOutput_ReturnsInvalidSharePayload(t *testing.T) {
 		t.Fatalf("expected ErrInvalidSharePayload, got %v", err)
 	}
 }
+
+func TestRunDKGSession_ReturnsOutputFromPersistedShare(t *testing.T) {
+	share := makeTestECDSAShare(t)
+	runner := newDKGOutputRunner(share)
+	store := newMemoryShareStore()
+	svc := New(runner, testLogger(t), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, store)
+
+	out, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "session-persisted",
+		LocalPartyID: "p1",
+		OrgID:        "org-1",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		Chain:        "tron",
+		EmptyKeyErr:  errEmptyKey,
+		MissingPub:   errMissingPub,
+		MissingAddr:  errMissingAddr,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession() err = %v", err)
+	}
+	if out.KeyID != "session-persisted" || out.PublicKey == "" || out.Address == "" {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+	if _, err := runner.ExportECDSAKeyShare("session-persisted"); err == nil {
+		t.Fatal("expected persisted DKG to clear runner-held share")
+	}
+	if store.loadCalls == 0 {
+		t.Fatal("expected persisted share to be used for output readback")
+	}
+}
+
+func TestRunDKGSession_ReturnsOutputFromRunnerWithoutStore(t *testing.T) {
+	share := makeTestECDSAShare(t)
+	runner := newDKGOutputRunner(share)
+	svc := New(runner, testLogger(t), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil)
+
+	out, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "session-runner",
+		LocalPartyID: "p1",
+		OrgID:        "org-1",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		Chain:        "tron-mainnet",
+		EmptyKeyErr:  errEmptyKey,
+		MissingPub:   errMissingPub,
+		MissingAddr:  errMissingAddr,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession() err = %v", err)
+	}
+	if out.KeyID != "session-runner" || out.PublicKey == "" || out.Address == "" {
+		t.Fatalf("unexpected output: %+v", out)
+	}
+}
+
+func TestRunDKGSession_PartialSuccessReturnsReadbackErrorAndAllowsRecovery(t *testing.T) {
+	share := makeTestECDSAShare(t)
+	store := newMemoryShareStore()
+	store.loadErrOnce = coreshares.ErrVaultReadFailed
+	runner := newDKGOutputRunner(share)
+	svc := New(runner, testLogger(t), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, store)
+
+	out, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "session-recover",
+		LocalPartyID: "p1",
+		OrgID:        "org-1",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "ecdsa",
+		Chain:        "tron",
+		EmptyKeyErr:  errEmptyKey,
+		MissingPub:   errMissingPub,
+		MissingAddr:  errMissingAddr,
+	})
+	if !errors.Is(err, coreshares.ErrVaultReadFailed) {
+		t.Fatalf("expected ErrVaultReadFailed, got %v", err)
+	}
+	if out != (DKGOutput{}) {
+		t.Fatalf("expected zero output on readback error, got %+v", out)
+	}
+
+	recovered, err := svc.ReadDKGOutput(context.Background(), ReadDKGOutputInput{
+		SessionID:           "session-recover",
+		OrgID:               "org-1",
+		Algorithm:           "ecdsa",
+		Chain:               "tron",
+		EmptyKeyErr:         errEmptyKey,
+		MissingPublicKey:    errMissingPub,
+		MissingAddressErr:   errMissingAddr,
+		MetadataMismatch:    errMetadataMismatch,
+		UnsupportedAlgErr:   errUnsupportedAlg,
+		UnsupportedChainErr: errUnsupportedChain,
+	})
+	if err != nil {
+		t.Fatalf("ReadDKGOutput() err = %v", err)
+	}
+	if recovered.KeyID != "session-recover" || recovered.PublicKey == "" || recovered.Address == "" {
+		t.Fatalf("unexpected recovered output: %+v", recovered)
+	}
+}
+
+func TestRunDKGSession_NonECDSAReturnsZeroOutput(t *testing.T) {
+	runner := newDKGOutputRunner(ecdsakeygen.LocalPartySaveData{})
+	svc := New(runner, testLogger(t), &stubLifecyclePool{}, nil)
+
+	out, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:    "session-eddsa",
+		LocalPartyID: "p1",
+		OrgID:        "org-1",
+		Parties:      []string{"p1", "p2"},
+		Threshold:    1,
+		Algorithm:    "eddsa",
+		Chain:        "tron",
+		EmptyKeyErr:  errEmptyKey,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession() err = %v", err)
+	}
+	if out != (DKGOutput{}) {
+		t.Fatalf("expected zero output, got %+v", out)
+	}
+}

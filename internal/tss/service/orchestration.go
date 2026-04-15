@@ -126,7 +126,7 @@ func (s *Service) Snapshot() Snapshot {
 	return BuildSnapshot(s.preParamsPool, provider)
 }
 
-func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
+func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
 	job := tssbnbrunner.DKGJob{
 		SessionID:    in.SessionID,
 		LocalPartyID: in.LocalPartyID,
@@ -144,6 +144,7 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
 	started := time.Now()
+	var out DKGOutput
 	err := AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
 	if err == nil {
 		err = s.runner.RunDKG(ctx, job, in.Transport)
@@ -160,10 +161,21 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) error {
 		})
 	}
 	if err == nil && tssutils.IsECDSA(job.Algorithm) {
-		err = tssruntime.EnsureDKGMetadata(s.runner, in.SessionID, in.MissingPub, in.MissingAddr)
+		out, err = s.ReadDKGOutput(ctx, ReadDKGOutputInput{
+			SessionID:           job.SessionID,
+			OrgID:               job.OrgID,
+			Algorithm:           job.Algorithm,
+			Chain:               job.Chain,
+			EmptyKeyErr:         in.EmptyKeyErr,
+			MissingPublicKey:    in.MissingPub,
+			MissingAddressErr:   in.MissingAddr,
+			MetadataMismatch:    coreshares.ErrMetadataMismatch,
+			UnsupportedAlgErr:   errors.New("unsupported dkg output algorithm"),
+			UnsupportedChainErr: tssruntime.ErrUnsupportedDKGOutputChain,
+		})
 	}
 	tsslogging.LogSessionEnd(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID, started, err)
-	return err
+	return out, err
 }
 
 func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {

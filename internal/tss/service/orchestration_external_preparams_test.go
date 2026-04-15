@@ -82,7 +82,7 @@ func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := New(runner, logger, internalPool, nil, externalSource)
 
-	err := svc.RunDKGSession(context.Background(), DKGInput{
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-1",
 		LocalPartyID: "p1",
 		OrgID:        "org",
@@ -112,7 +112,7 @@ func TestRunDKGSession_UsesInternalPoolWhenExternalPreParamsSourceMissing(t *tes
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := New(runner, logger, internalPool, nil)
 
-	err := svc.RunDKGSession(context.Background(), DKGInput{
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-2",
 		LocalPartyID: "p1",
 		OrgID:        "org",

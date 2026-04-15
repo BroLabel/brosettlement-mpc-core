@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
@@ -39,6 +40,11 @@ type SignPrepareInput struct {
 	Algorithm        string
 	EmptyKeyErr      error
 	MetadataMismatch error
+}
+
+type DerivedECDSAOutput struct {
+	PublicKey string
+	Address   string
 }
 
 func PersistShareAfterDKG(ctx context.Context, store ShareStore, runner Runner, in DKGPersistInput) error {
@@ -83,22 +89,31 @@ func PrepareShareForSign(ctx context.Context, store ShareStore, runner Runner, i
 	}, nil
 }
 
+func DeriveECDSAOutputFromShare(share ecdsakeygen.LocalPartySaveData, missingPublicKeyErr, missingAddressErr error) (DerivedECDSAOutput, error) {
+	pub := extractECDSAPublicKey(share)
+	if pub == "" {
+		return DerivedECDSAOutput{}, missingPublicKeyErr
+	}
+	address, err := tssbnbutils.ECDSAAddressFromShare(share)
+	if err != nil {
+		return DerivedECDSAOutput{}, err
+	}
+	if strings.TrimSpace(address) == "" {
+		return DerivedECDSAOutput{}, missingAddressErr
+	}
+	return DerivedECDSAOutput{
+		PublicKey: pub,
+		Address:   address,
+	}, nil
+}
+
 func EnsureDKGMetadata(runner Runner, sessionID string, missingPublicKeyErr, missingAddressErr error) error {
 	share, err := runner.ExportECDSAKeyShare(sessionID)
 	if err != nil {
 		return err
 	}
-	if extractECDSAPublicKey(share) == "" {
-		return missingPublicKeyErr
-	}
-	address, err := runner.ECDSAAddress(sessionID)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(address) == "" {
-		return missingAddressErr
-	}
-	return nil
+	_, err = DeriveECDSAOutputFromShare(share, missingPublicKeyErr, missingAddressErr)
+	return err
 }
 
 func ValidateLoadedMeta(keyID, orgID, algorithm string, meta coreshares.ShareMeta, metadataMismatchErr error) error {

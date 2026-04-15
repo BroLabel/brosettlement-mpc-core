@@ -162,6 +162,28 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		logEnd(err)
 		return DKGOutput{}, err
 	}
+
+	var output DKGOutput
+	if tssutils.IsECDSA(job.Algorithm) {
+		share, exportErr := s.runner.ExportECDSAKeyShare(in.SessionID)
+		if exportErr != nil {
+			logEnd(exportErr)
+			return DKGOutput{}, exportErr
+		}
+		derived, deriveErr := tssruntime.DeriveECDSAOutputFromShare(share, in.MissingPub, in.MissingAddr)
+		if deriveErr != nil {
+			logEnd(deriveErr)
+			return DKGOutput{}, deriveErr
+		}
+		output = DKGOutput{
+			KeyID:     keyID,
+			PublicKey: derived.PublicKey,
+			Address:   derived.Address,
+		}
+	} else {
+		output = DKGOutput{KeyID: keyID}
+	}
+
 	if s.shareStore != nil && tssutils.IsECDSA(job.Algorithm) {
 		err = tssruntime.PersistShareAfterDKG(ctx, s.shareStore, s.runner, tssruntime.DKGPersistInput{
 			SessionID:         job.SessionID,
@@ -176,16 +198,6 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 			logEnd(err)
 			return DKGOutput{}, err
 		}
-	}
-	if tssutils.IsECDSA(job.Algorithm) {
-		err = tssruntime.EnsureDKGMetadata(s.runner, in.SessionID, in.MissingPub, in.MissingAddr)
-		if err != nil {
-			logEnd(err)
-			return DKGOutput{}, err
-		}
-	}
-	output := DKGOutput{
-		KeyID: keyID,
 	}
 	logEnd(nil)
 	return output, nil

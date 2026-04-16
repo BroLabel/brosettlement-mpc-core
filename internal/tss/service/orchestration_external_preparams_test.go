@@ -480,3 +480,41 @@ func TestRunDKGSession_EdDSAReturnsKeyIDOnly(t *testing.T) {
 		t.Fatalf("expected eddsa path to skip ecdsa share handling, got exports=%v deletes=%v", runner.exportedKeys, runner.deletedKeys)
 	}
 }
+
+func TestBuildECDSADKGOutput(t *testing.T) {
+	t.Parallel()
+
+	runner := newECDSAStubRunner(t, "session-1")
+	out, share, err := buildECDSADKGOutput(runner, DKGInput{
+		SessionID:   "session-1",
+		MissingPub:  errMissingPublicKey,
+		MissingAddr: errMissingAddress,
+	}, "key-1")
+	if err != nil {
+		t.Fatalf("buildECDSADKGOutput returned error: %v", err)
+	}
+	if out.KeyID != "key-1" || out.PublicKey == "" || out.Address == "" {
+		t.Fatalf("expected populated output, got %+v", out)
+	}
+	if reflect.DeepEqual(share, ecdsakeygen.LocalPartySaveData{}) {
+		t.Fatal("expected returned share to be populated")
+	}
+}
+
+func TestPrepareShareForSign_SkipsWhenStoreMissing(t *testing.T) {
+	t.Parallel()
+
+	runner := newECDSAStubRunner(t, "key-1")
+	cleanup, err := prepareShareForSign(context.Background(), nil, runner, tssbnbrunner.SignJob{
+		KeyID:     "key-1",
+		OrgID:     "org",
+		Algorithm: "ecdsa",
+	}, errShareMissing, errShareMissing)
+	if err != nil {
+		t.Fatalf("prepareShareForSign returned error: %v", err)
+	}
+	cleanup()
+	if len(runner.deletedKeys) != 0 {
+		t.Fatalf("expected noop cleanup without store, got %+v", runner.deletedKeys)
+	}
+}

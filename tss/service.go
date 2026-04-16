@@ -56,14 +56,8 @@ type SignSessionRequest struct {
 	Transport    Transport
 }
 
-type dkgJob = tssbnbrunner.DKGJob
-type signJob = tssbnbrunner.SignJob
 type runner = tssservice.Runner
 type preParamsProvider = tssservice.LifecyclePool
-
-type preParamsSnapshotProvider interface {
-	Snapshot() preparams.Snapshot
-}
 
 type Snapshot = tssservice.Snapshot
 type DKGOutput = tssservice.DKGOutput

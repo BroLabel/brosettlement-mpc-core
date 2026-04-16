@@ -143,10 +143,7 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		Algorithm:    in.Algorithm,
 		Chain:        in.Chain,
 	}
-	keyID := strings.TrimSpace(in.KeyID)
-	if keyID == "" {
-		keyID = in.SessionID
-	}
+	keyID := normalizeDKGKeyID(in.SessionID, in.KeyID, job.Algorithm)
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
 	started := time.Now()
@@ -201,6 +198,17 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 	}
 	logEnd(nil)
 	return output, nil
+}
+
+func normalizeDKGKeyID(sessionID, providedKeyID, algorithm string) string {
+	if tssutils.IsECDSA(algorithm) {
+		return sessionID
+	}
+	keyID := strings.TrimSpace(providedKeyID)
+	if keyID == "" {
+		return sessionID
+	}
+	return keyID
 }
 
 func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {

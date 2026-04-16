@@ -314,7 +314,7 @@ func TestRunDKGSession_ReturnsRawAddressDerivationError(t *testing.T) {
 	}
 }
 
-func TestRunDKGSession_ReturnsOutputBeforeCleanup(t *testing.T) {
+func TestRunDKGSession_NormalizesECDSAKeyIDToSessionIDBeforeCleanup(t *testing.T) {
 	runner := newECDSAStubRunner(t, "session-1")
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
@@ -334,8 +334,8 @@ func TestRunDKGSession_ReturnsOutputBeforeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
 	}
-	if out.KeyID != "key-1" {
-		t.Fatalf("expected key id key-1, got %q", out.KeyID)
+	if out.KeyID != "session-1" {
+		t.Fatalf("expected key id to normalize to session id, got %q", out.KeyID)
 	}
 	if out.PublicKey == "" || out.Address == "" {
 		t.Fatalf("expected populated output, got %+v", out)
@@ -366,13 +366,19 @@ func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
 	}
-	if out.KeyID != "key-1" {
-		t.Fatalf("expected key id key-1, got %q", out.KeyID)
+	if out.KeyID != "session-1" {
+		t.Fatalf("expected key id to normalize to session id, got %q", out.KeyID)
 	}
 	if len(store.savedBlob) == 0 {
 		t.Fatal("expected share to be persisted")
 	}
-	wantEvents := []string{"export:session-1", "persist:key-1", "cleanup:session-1"}
+	if store.savedKeyID != "session-1" {
+		t.Fatalf("expected persisted key id session-1, got %q", store.savedKeyID)
+	}
+	if store.savedMeta.KeyID != "session-1" {
+		t.Fatalf("expected persisted metadata key id session-1, got %q", store.savedMeta.KeyID)
+	}
+	wantEvents := []string{"export:session-1", "persist:session-1", "cleanup:session-1"}
 	if !reflect.DeepEqual(runner.events, wantEvents) {
 		t.Fatalf("expected events %v, got %v", wantEvents, runner.events)
 	}

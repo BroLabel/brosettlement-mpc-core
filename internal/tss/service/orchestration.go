@@ -133,16 +133,7 @@ func (s *Service) Snapshot() Snapshot {
 }
 
 func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
-	job := tssbnbrunner.DKGJob{
-		SessionID:    in.SessionID,
-		LocalPartyID: in.LocalPartyID,
-		OrgID:        in.OrgID,
-		Parties:      in.Parties,
-		Threshold:    in.Threshold,
-		Curve:        in.Curve,
-		Algorithm:    in.Algorithm,
-		Chain:        in.Chain,
-	}
+	job := buildDKGJob(in)
 	keyID := normalizeDKGKeyID(in.SessionID, in.KeyID, job.Algorithm)
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
@@ -159,45 +150,67 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-
-	var output DKGOutput
-	var share ecdsakeygen.LocalPartySaveData
-	if tssutils.IsECDSA(job.Algorithm) {
-		exportedShare, exportErr := s.runner.ExportECDSAKeyShare(in.SessionID)
-		if exportErr != nil {
-			logEnd(exportErr)
-			return DKGOutput{}, exportErr
-		}
-		share = exportedShare
-		derived, deriveErr := tssruntime.DeriveECDSAOutputFromShare(share, in.MissingPub, in.MissingAddr)
-		if deriveErr != nil {
-			logEnd(deriveErr)
-			return DKGOutput{}, deriveErr
-		}
-		output = DKGOutput{
-			KeyID:     keyID,
-			PublicKey: derived.PublicKey,
-			Address:   derived.Address,
-		}
-	} else {
-		output = DKGOutput{KeyID: keyID}
+	if !tssutils.IsECDSA(job.Algorithm) {
+		logEnd(nil)
+		return DKGOutput{KeyID: keyID}, nil
 	}
 
-	if s.shareStore != nil && tssutils.IsECDSA(job.Algorithm) {
-		err = tssruntime.PersistShareAfterDKG(ctx, s.shareStore, share, tssruntime.DKGPersistInput{
-			KeyID:     keyID,
-			OrgID:     job.OrgID,
-			Algorithm: job.Algorithm,
-			Curve:     job.Curve,
-		})
-		if err != nil {
-			logEnd(err)
-			return DKGOutput{}, err
-		}
-		s.runner.DeleteECDSAKeyShare(in.SessionID)
+	output, share, err := s.buildECDSADKGOutput(in, keyID)
+	if err != nil {
+		logEnd(err)
+		return DKGOutput{}, err
+	}
+	if err = s.persistECDSAShareAfterDKG(ctx, in.SessionID, job, keyID, share); err != nil {
+		logEnd(err)
+		return DKGOutput{}, err
 	}
 	logEnd(nil)
 	return output, nil
+}
+
+func buildDKGJob(in DKGInput) tssbnbrunner.DKGJob {
+	return tssbnbrunner.DKGJob{
+		SessionID:    in.SessionID,
+		LocalPartyID: in.LocalPartyID,
+		OrgID:        in.OrgID,
+		Parties:      in.Parties,
+		Threshold:    in.Threshold,
+		Curve:        in.Curve,
+		Algorithm:    in.Algorithm,
+		Chain:        in.Chain,
+	}
+}
+
+func (s *Service) buildECDSADKGOutput(in DKGInput, keyID string) (DKGOutput, ecdsakeygen.LocalPartySaveData, error) {
+	share, err := s.runner.ExportECDSAKeyShare(in.SessionID)
+	if err != nil {
+		return DKGOutput{}, ecdsakeygen.LocalPartySaveData{}, err
+	}
+	derived, err := tssruntime.DeriveECDSAOutputFromShare(share, in.MissingPub, in.MissingAddr)
+	if err != nil {
+		return DKGOutput{}, ecdsakeygen.LocalPartySaveData{}, err
+	}
+	return DKGOutput{
+		KeyID:     keyID,
+		PublicKey: derived.PublicKey,
+		Address:   derived.Address,
+	}, share, nil
+}
+
+func (s *Service) persistECDSAShareAfterDKG(ctx context.Context, sessionID string, job tssbnbrunner.DKGJob, keyID string, share ecdsakeygen.LocalPartySaveData) error {
+	if s.shareStore == nil {
+		return nil
+	}
+	if err := tssruntime.PersistShareAfterDKG(ctx, s.shareStore, share, tssruntime.DKGPersistInput{
+		KeyID:     keyID,
+		OrgID:     job.OrgID,
+		Algorithm: job.Algorithm,
+		Curve:     job.Curve,
+	}); err != nil {
+		return err
+	}
+	s.runner.DeleteECDSAKeyShare(sessionID)
+	return nil
 }
 
 func normalizeDKGKeyID(sessionID, providedKeyID, algorithm string) string {

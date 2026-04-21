@@ -66,6 +66,22 @@ func TestNewBnbServiceReturnsFacade(t *testing.T) {
 	if got := svc.Snapshot(); got != (Snapshot{}) {
 		t.Fatalf("expected zero-value snapshot, got %+v", got)
 	}
+
+	var zero DKGOutput
+	if zero != (DKGOutput{}) {
+		t.Fatalf("expected zero-value output type, got %+v", zero)
+	}
+}
+
+func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {
+	got := DKGOutput{
+		KeyID:     "key-1",
+		PublicKey: "04abcd",
+		Address:   "T...",
+	}
+	if got.KeyID == "" || got.PublicKey == "" || got.Address == "" {
+		t.Fatalf("expected populated facade output, got %+v", got)
+	}
 }
 
 type stubShareStore struct{}

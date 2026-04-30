@@ -10,6 +10,7 @@ import (
 
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
+	"github.com/bnb-chain/tss-lib/common"
 )
 
 type testMetrics struct{}
@@ -126,5 +127,48 @@ func TestRecvLoopCanceled(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting canceled error")
+	}
+}
+
+func TestSignProtocolDoneWaitsGraceBeforeEmitting(t *testing.T) {
+	endCh := make(chan *common.SignatureData, 1)
+	exec := New(Params{
+		SessionID:      "s1",
+		LocalPartyID:   "co-signer",
+		Stage:          "sign",
+		SignECDSAEndCh: endCh,
+		Config:         tssbnbutils.DefaultRunnerConfig(),
+		Metrics:        testMetrics{},
+	})
+
+	rt := newSessionRuntime[protocolEvent](context.Background(), 4)
+	defer rt.Stop()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- exec.runProtocolResultWorker(rt) }()
+	endCh <- &common.SignatureData{Signature: []byte("sig")}
+
+	select {
+	case <-rt.Events:
+		t.Fatal("protocol done emitted before sign grace elapsed")
+	case <-time.After(signProtocolDoneGrace / 2):
+	}
+
+	select {
+	case ev := <-rt.Events:
+		if ev.typ != eventProtocolDone {
+			t.Fatalf("event = %v, want eventProtocolDone", ev.typ)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting protocol done")
+	}
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runProtocolResultWorker returned err: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting protocol result worker return")
 	}
 }

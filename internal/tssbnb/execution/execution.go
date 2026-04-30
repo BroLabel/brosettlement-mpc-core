@@ -33,6 +33,11 @@ var (
 	ErrStalledProtocol    = bnbutils.ErrStalledProtocol
 )
 
+// tss-lib may publish the sign terminal result before this runner observes the
+// final outbound sign message. Delay terminal signaling briefly so the outbound
+// pump can flush already-produced frames without changing DKG completion.
+const signProtocolDoneGrace = 100 * time.Millisecond
+
 type Transport interface {
 	SendFrame(ctx context.Context, frame protocol.Frame) error
 	RecvFrame(ctx context.Context) (protocol.Frame, error)
@@ -282,12 +287,27 @@ func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime[protocolE
 			rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{ecdsaKeyShare: &d}})
 			return nil
 		case sig := <-e.signECDSAEndCh:
+			if !e.waitSignProtocolDoneGrace(rt.Ctx) {
+				return nil
+			}
 			rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{signature: sig}})
 			return nil
 		case <-e.doneCh:
 			rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{}})
 			return nil
 		}
+	}
+}
+
+func (e *ProtocolExecution) waitSignProtocolDoneGrace(ctx context.Context) bool {
+	timer := time.NewTimer(signProtocolDoneGrace)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

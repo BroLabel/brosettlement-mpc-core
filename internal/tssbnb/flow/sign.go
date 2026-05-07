@@ -38,12 +38,13 @@ type SignBuildOutput struct {
 }
 
 type SignRunJob struct {
-	SessionID    string
-	LocalPartyID string
-	KeyID        string
-	Parties      []string
-	Digest       []byte
-	Algorithm    string
+	SessionID             string
+	LocalPartyID          string
+	KeyID                 string
+	Parties               []string
+	Digest                []byte
+	Algorithm             string
+	DerivationContextHash string
 }
 
 type SignRunMetrics = bnbutils.Metrics
@@ -162,19 +163,20 @@ func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, l
 		OutCh:    outCh,
 	})
 	return execution.New(execution.Params{
-		SessionID:      job.SessionID,
-		LocalPartyID:   job.LocalPartyID,
-		CorrelationID:  correlationID,
-		Stage:          "sign",
-		Algorithm:      "ecdsa",
-		Party:          built.Party,
-		PartyIDs:       partyIDs,
-		OutCh:          outCh,
-		Logger:         logger,
-		Debug:          debug,
-		Config:         cfg,
-		Metrics:        metrics,
-		SignECDSAEndCh: built.End,
+		SessionID:             job.SessionID,
+		LocalPartyID:          job.LocalPartyID,
+		CorrelationID:         correlationID,
+		Stage:                 "sign",
+		Algorithm:             "ecdsa",
+		DerivationContextHash: job.DerivationContextHash,
+		Party:                 built.Party,
+		PartyIDs:              partyIDs,
+		OutCh:                 outCh,
+		Logger:                logger,
+		Debug:                 debug,
+		Config:                cfg,
+		Metrics:               metrics,
+		SignECDSAEndCh:        built.End,
 	}), nil
 }
 

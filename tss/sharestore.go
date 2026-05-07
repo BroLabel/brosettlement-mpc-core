@@ -27,6 +27,16 @@ var (
 type StoredShare = coreshares.StoredShare
 type ShareMeta = coreshares.ShareMeta
 type ShareStore = coreshares.Store
+type ECDSAKeyMaterial = coreshares.ECDSAKeyMaterial
+type KeyMaterialMeta = coreshares.KeyMaterialMeta
+
+func MarshalKeyMaterial(material ECDSAKeyMaterial) ([]byte, error) {
+	return coreshares.MarshalKeyMaterial(material)
+}
+
+func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
+	return coreshares.UnmarshalKeyMaterial(blob)
+}
 
 func MarshalShare(share ecdsakeygen.LocalPartySaveData) ([]byte, error) {
 	return coreshares.MarshalShare(share)

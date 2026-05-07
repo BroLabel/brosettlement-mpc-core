@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssrequests "github.com/BroLabel/brosettlement-mpc-core/internal/tss/requests"
 	tssservice "github.com/BroLabel/brosettlement-mpc-core/internal/tss/service"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -166,20 +168,31 @@ func (s *Service) Snapshot() Snapshot {
 }
 
 func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error) {
+	if err := req.Validate(); err != nil {
+		return DKGOutput{}, err
+	}
+	var material tssservice.DKGDerivationMaterial
+	if req.DerivationMaterial != nil {
+		material = tssservice.DKGDerivationMaterial{
+			ChainCode:        req.DerivationMaterial.ChainCode,
+			DerivationScheme: req.DerivationMaterial.DerivationScheme,
+		}
+	}
 	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
-		SessionID:    req.Session.SessionID,
-		LocalPartyID: req.LocalPartyID,
-		OrgID:        req.Session.OrgID,
-		KeyID:        req.Session.KeyID,
-		Parties:      req.Session.Parties,
-		Threshold:    req.Session.Threshold,
-		Curve:        req.Session.Curve,
-		Algorithm:    req.Session.Algorithm,
-		Chain:        req.Session.Chain,
-		Transport:    req.Transport,
-		EmptyKeyErr:  ErrVaultWriteFailed,
-		MissingPub:   ErrMissingDKGPublicKey,
-		MissingAddr:  ErrMissingDKGAddress,
+		SessionID:          req.Session.SessionID,
+		LocalPartyID:       req.LocalPartyID,
+		OrgID:              req.Session.OrgID,
+		KeyID:              req.Session.KeyID,
+		Parties:            req.Session.Parties,
+		Threshold:          req.Session.Threshold,
+		Curve:              req.Session.Curve,
+		Algorithm:          req.Session.Algorithm,
+		Chain:              req.Session.Chain,
+		DerivationMaterial: material,
+		Transport:          req.Transport,
+		EmptyKeyErr:        ErrKeyIDRequired,
+		MissingPub:         ErrMissingDKGPublicKey,
+		MissingAddr:        ErrMissingDKGAddress,
 	})
 }
 
@@ -231,7 +244,7 @@ func isValidSessionDescriptor(session SessionDescriptor) bool {
 }
 
 func (r DKGSessionRequest) Validate() error {
-	return tssrequests.ValidateDKG(tssrequests.DKGRequest{
+	err := tssrequests.ValidateDKG(tssrequests.DKGRequest{
 		Session: tssrequests.SessionDescriptor{
 			SessionID: r.Session.SessionID,
 			OrgID:     r.Session.OrgID,
@@ -242,6 +255,31 @@ func (r DKGSessionRequest) Validate() error {
 		LocalPartyID: r.LocalPartyID,
 		HasTransport: r.Transport != nil,
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrTransportRequired)
+	if err != nil {
+		return err
+	}
+	if corederivation.IsECDSAAlgorithm(r.Session.Algorithm) && strings.TrimSpace(r.Session.KeyID) == "" {
+		return ErrKeyIDRequired
+	}
+	_, _, err = corederivation.ValidateDKGMaterial(r.Session.Algorithm, corederivation.DKGMaterial{
+		ChainCode:        derivationMaterialChainCode(r.DerivationMaterial),
+		DerivationScheme: derivationMaterialScheme(r.DerivationMaterial),
+	})
+	return err
+}
+
+func derivationMaterialChainCode(material *DKGDerivationMaterial) string {
+	if material == nil {
+		return ""
+	}
+	return material.ChainCode
+}
+
+func derivationMaterialScheme(material *DKGDerivationMaterial) string {
+	if material == nil {
+		return ""
+	}
+	return material.DerivationScheme
 }
 
 func (r SignSessionRequest) Validate() error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,47 @@ func TestDKGSessionRequestValidateRequiresTransport(t *testing.T) {
 	}
 }
 
+func TestDKGSessionRequestValidateRequiresECDSADerivationMaterial(t *testing.T) {
+	req := DKGSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "dkg-1",
+			OrgID:     "org-1",
+			KeyID:     "key-1",
+			Parties:   []string{"p1", "p2", "p3"},
+			Threshold: 2,
+			Algorithm: AlgorithmECDSA,
+			Curve:     CurveSecp256k1,
+		},
+		LocalPartyID: "p1",
+		Transport:    noopTransport{},
+	}
+
+	err := req.Validate()
+	if !errors.Is(err, ErrChainCodeMissing) {
+		t.Fatalf("expected ErrChainCodeMissing, got %v", err)
+	}
+}
+
+func TestDKGSessionRequestValidateRejectsMalformedChainCode(t *testing.T) {
+	req := validDKGRequestWithMaterial()
+	req.DerivationMaterial.ChainCode = "0x11"
+
+	err := req.Validate()
+	if !errors.Is(err, ErrChainCodeInvalid) {
+		t.Fatalf("expected ErrChainCodeInvalid, got %v", err)
+	}
+}
+
+func TestDKGSessionRequestValidateRequiresECDSAKeyID(t *testing.T) {
+	req := validDKGRequestWithMaterial()
+	req.Session.KeyID = ""
+
+	err := req.Validate()
+	if !errors.Is(err, ErrKeyIDRequired) {
+		t.Fatalf("expected ErrKeyIDRequired, got %v", err)
+	}
+}
+
 func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 	req := SignSessionRequest{
 		Session: SessionDescriptor{
@@ -54,6 +96,26 @@ func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 	err := req.Validate()
 	if !errors.Is(err, ErrDigestMissing) {
 		t.Fatalf("expected ErrDigestMissing, got %v", err)
+	}
+}
+
+func validDKGRequestWithMaterial() DKGSessionRequest {
+	return DKGSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "dkg-1",
+			OrgID:     "org-1",
+			KeyID:     "key-1",
+			Parties:   []string{"p1", "p2", "p3"},
+			Threshold: 2,
+			Algorithm: AlgorithmECDSA,
+			Curve:     CurveSecp256k1,
+		},
+		LocalPartyID: "p1",
+		DerivationMaterial: &DKGDerivationMaterial{
+			ChainCode:        strings.Repeat("11", 32),
+			DerivationScheme: DerivationSchemeBIP32Secp256k1,
+		},
+		Transport: noopTransport{},
 	}
 }
 

@@ -64,14 +64,22 @@ func (s *Service) Snapshot() Snapshot {
 
 func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
 	job := buildDKGJob(in)
-	keyID := normalizeDKGKeyID(in.SessionID, in.KeyID, job.Algorithm)
+	keyID, err := resolveDKGOutputKeyID(in, job.Algorithm)
+	if err != nil {
+		return DKGOutput{}, err
+	}
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
 	started := time.Now()
 	logEnd := func(err error) {
 		tsslogging.LogSessionEnd(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID, started, err)
 	}
-	err := AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
+	material, err := normalizeDKGMaterial(in)
+	if err != nil {
+		logEnd(err)
+		return DKGOutput{}, err
+	}
+	err = AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
 	if err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
@@ -85,12 +93,12 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		return DKGOutput{KeyID: keyID}, nil
 	}
 
-	output, share, err := buildECDSADKGOutput(s.runner, in, keyID)
+	output, share, err := buildECDSADKGOutput(s.runner, in, keyID, material)
 	if err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-	if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, job, keyID, share); err != nil {
+	if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, job, keyID, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
 	}

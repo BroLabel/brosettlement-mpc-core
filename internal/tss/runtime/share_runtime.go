@@ -23,10 +23,13 @@ type Runner interface {
 }
 
 type DKGPersistInput struct {
-	KeyID     string
-	OrgID     string
-	Algorithm string
-	Curve     string
+	KeyID            string
+	OrgID            string
+	Algorithm        string
+	Curve            string
+	ChainCode        []byte
+	PublicKeyFormat  string
+	DerivationScheme string
 }
 
 type SignPrepareInput struct {
@@ -46,9 +49,23 @@ func PersistShareAfterDKG(ctx context.Context, store ShareStore, share ecdsakeyg
 	blob, err := coreshares.MarshalShare(share)
 	if err == nil {
 		defer tssutils.ZeroBytes(blob)
-		err = store.SaveShare(ctx, in.KeyID, blob, tssutils.DKGShareMeta(in.KeyID, in.OrgID, in.Algorithm, in.Curve))
+		err = store.SaveShare(ctx, in.KeyID, blob, tssutils.DKGShareMeta(in.KeyID, in.OrgID, in.Algorithm, in.Curve, len(in.ChainCode) == 32, in.PublicKeyFormat, in.DerivationScheme))
 	}
 	return err
+}
+
+func PersistKeyMaterialAfterDKG(ctx context.Context, store ShareStore, share ecdsakeygen.LocalPartySaveData, in DKGPersistInput) error {
+	blob, err := coreshares.MarshalKeyMaterial(coreshares.ECDSAKeyMaterial{
+		Share:            share,
+		ChainCode:        append([]byte(nil), in.ChainCode...),
+		PublicKeyFormat:  in.PublicKeyFormat,
+		DerivationScheme: in.DerivationScheme,
+	})
+	if err != nil {
+		return err
+	}
+	defer tssutils.ZeroBytes(blob)
+	return store.SaveShare(ctx, in.KeyID, blob, tssutils.DKGShareMeta(in.KeyID, in.OrgID, in.Algorithm, in.Curve, len(in.ChainCode) == 32, in.PublicKeyFormat, in.DerivationScheme))
 }
 
 func PrepareShareForSign(ctx context.Context, store ShareStore, runner Runner, in SignPrepareInput) (func(), error) {

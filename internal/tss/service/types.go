@@ -40,26 +40,35 @@ type SnapshotPool interface {
 	SnapshotProvider
 }
 
+type DKGDerivationMaterial struct {
+	ChainCode        string
+	DerivationScheme string
+}
+
 type DKGInput struct {
-	SessionID    string
-	LocalPartyID string
-	OrgID        string
-	KeyID        string
-	Parties      []string
-	Threshold    uint32
-	Curve        string
-	Algorithm    string
-	Chain        string
-	Transport    coretransport.FrameTransport
-	EmptyKeyErr  error
-	MissingPub   error
-	MissingAddr  error
+	SessionID          string
+	LocalPartyID       string
+	OrgID              string
+	KeyID              string
+	Parties            []string
+	Threshold          uint32
+	Curve              string
+	Algorithm          string
+	Chain              string
+	DerivationMaterial DKGDerivationMaterial
+	Transport          coretransport.FrameTransport
+	EmptyKeyErr        error
+	MissingPub         error
+	MissingAddr        error
 }
 
 type DKGOutput struct {
-	KeyID     string
-	PublicKey string
-	Address   string
+	KeyID            string
+	PublicKey        string
+	Address          string
+	ChainCode        string
+	PublicKeyFormat  string
+	DerivationScheme string
 }
 
 type SignInput struct {

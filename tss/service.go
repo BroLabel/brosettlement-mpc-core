@@ -263,5 +263,5 @@ func (r SignSessionRequest) Validate() error {
 	if r.DerivationContext == nil {
 		return ErrDerivationContextRequired
 	}
-	return nil
+	return validateDerivationContextForSession(*r.DerivationContext, r.Session)
 }

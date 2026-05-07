@@ -63,3 +63,61 @@ func wrapPublicDerivationError(base error, msg string) error {
 	}
 	return fmt.Errorf("%w: %s", base, msg)
 }
+
+func NormalizeDerivationContext(in DerivationContext) (DerivationContext, error) {
+	out, err := corederivation.NormalizeContext(toCoreDerivationContext(in))
+	if err != nil {
+		return DerivationContext{}, err
+	}
+	return fromCoreDerivationContext(out), nil
+}
+
+func validateDerivationContextForSession(ctx DerivationContext, session SessionDescriptor) error {
+	normalized, err := corederivation.NormalizeContext(toCoreDerivationContext(ctx))
+	if err != nil {
+		return err
+	}
+	return corederivation.MatchSession(normalized, corederivation.Session{
+		Algorithm: session.Algorithm,
+		Curve:     session.Curve,
+		Chain:     session.Chain,
+	})
+}
+
+func toCoreDerivationContext(in DerivationContext) corederivation.Context {
+	return corederivation.Context{
+		ProfileID:         in.ProfileID,
+		Chain:             in.Chain,
+		Algorithm:         in.Algorithm,
+		Curve:             in.Curve,
+		Scheme:            in.Scheme,
+		AccountPath:       in.AccountPath,
+		ChildPath:         in.ChildPath,
+		FullPath:          in.FullPath,
+		AddressEncoding:   in.AddressEncoding,
+		ExpectedAddress:   in.ExpectedAddress,
+		DerivedPublicKey:  in.DerivedPublicKey,
+		Descriptor:        in.Descriptor,
+		DescriptorVersion: in.DescriptorVersion,
+		ProfileVersion:    in.ProfileVersion,
+	}
+}
+
+func fromCoreDerivationContext(in corederivation.Context) DerivationContext {
+	return DerivationContext{
+		ProfileID:         in.ProfileID,
+		Chain:             in.Chain,
+		Algorithm:         in.Algorithm,
+		Curve:             in.Curve,
+		Scheme:            in.Scheme,
+		AccountPath:       in.AccountPath,
+		ChildPath:         in.ChildPath,
+		FullPath:          in.FullPath,
+		AddressEncoding:   in.AddressEncoding,
+		ExpectedAddress:   in.ExpectedAddress,
+		DerivedPublicKey:  in.DerivedPublicKey,
+		Descriptor:        in.Descriptor,
+		DescriptorVersion: in.DescriptorVersion,
+		ProfileVersion:    in.ProfileVersion,
+	}
+}

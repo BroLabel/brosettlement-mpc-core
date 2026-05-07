@@ -44,16 +44,18 @@ type SessionDescriptor struct {
 }
 
 type DKGSessionRequest struct {
-	Session      SessionDescriptor
-	LocalPartyID string
-	Transport    Transport
+	Session            SessionDescriptor
+	LocalPartyID       string
+	DerivationMaterial *DKGDerivationMaterial
+	Transport          Transport
 }
 
 type SignSessionRequest struct {
-	Session      SessionDescriptor
-	LocalPartyID string
-	Digest       []byte
-	Transport    Transport
+	Session           SessionDescriptor
+	LocalPartyID      string
+	Digest            []byte
+	DerivationContext *DerivationContext
+	Transport         Transport
 }
 
 type runner = tssservice.Runner
@@ -243,7 +245,7 @@ func (r DKGSessionRequest) Validate() error {
 }
 
 func (r SignSessionRequest) Validate() error {
-	return tssrequests.ValidateSign(tssrequests.SignRequest{
+	err := tssrequests.ValidateSign(tssrequests.SignRequest{
 		Session: tssrequests.SessionDescriptor{
 			SessionID: r.Session.SessionID,
 			OrgID:     r.Session.OrgID,
@@ -255,4 +257,11 @@ func (r SignSessionRequest) Validate() error {
 		Digest:       r.Digest,
 		HasTransport: r.Transport != nil,
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrKeyIDRequired, ErrDigestMissing, ErrTransportRequired)
+	if err != nil {
+		return err
+	}
+	if r.DerivationContext == nil {
+		return ErrDerivationContextRequired
+	}
+	return nil
 }

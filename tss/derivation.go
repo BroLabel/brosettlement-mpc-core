@@ -72,6 +72,10 @@ func NormalizeDerivationContext(in DerivationContext) (DerivationContext, error)
 	return fromCoreDerivationContext(out), nil
 }
 
+func DerivationContextHashV1(in DerivationContext) (string, error) {
+	return corederivation.HashV1(toCoreDerivationContext(in))
+}
+
 func validateDerivationContextForSession(ctx DerivationContext, session SessionDescriptor) error {
 	normalized, err := corederivation.NormalizeContext(toCoreDerivationContext(ctx))
 	if err != nil {

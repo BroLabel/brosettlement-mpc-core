@@ -60,3 +60,22 @@ func TestDerivationErrorsPreserveErrorsIs(t *testing.T) {
 		t.Fatalf("expected wrapper to preserve ErrInvalidDerivationContext, got %v", err)
 	}
 }
+
+func TestDerivationContextHashV1DoesNotMutateInput(t *testing.T) {
+	in := DerivationContext{
+		ProfileID:   "profile-1",
+		Algorithm:   "ECDSA",
+		Curve:       "SECP256K1",
+		Scheme:      DerivationSchemeBIP32Public,
+		AccountPath: "m/44h/60h/0h",
+		ChildPath:   "/0/15",
+		FullPath:    "m/44'/60'/0'/0/15",
+	}
+	before := in
+	if _, err := DerivationContextHashV1(in); err != nil {
+		t.Fatalf("DerivationContextHashV1 returned error: %v", err)
+	}
+	if in != before {
+		t.Fatalf("hash mutated input: before=%+v after=%+v", before, in)
+	}
+}

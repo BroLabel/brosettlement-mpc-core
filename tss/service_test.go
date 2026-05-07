@@ -148,6 +148,58 @@ func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalServic
 	}
 }
 
+func TestRunSignSessionRejectsNilDerivationContextBeforeInternalService(t *testing.T) {
+	svc := NewBnbService(slog.Default())
+	err := svc.RunSignSession(context.Background(), SignSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "sign-1",
+			OrgID:     "org-1",
+			KeyID:     "key-1",
+			Parties:   []string{"p1", "p2", "p3"},
+			Threshold: 2,
+			Algorithm: AlgorithmECDSA,
+			Curve:     CurveSecp256k1,
+		},
+		LocalPartyID: "p1",
+		Digest:       []byte{1, 2, 3},
+		Transport:    noopTransport{},
+	})
+	if !errors.Is(err, ErrDerivationContextRequired) {
+		t.Fatalf("expected ErrDerivationContextRequired, got %v", err)
+	}
+}
+
+func TestRunSignSessionRejectsInvalidDerivationContextBeforeInternalService(t *testing.T) {
+	svc := NewBnbService(slog.Default())
+	ctx := DerivationContext{
+		ProfileID:   "profile-1",
+		Algorithm:   AlgorithmECDSA,
+		Curve:       CurveSecp256k1,
+		Scheme:      DerivationSchemeBIP32Secp256k1,
+		AccountPath: "m/44'/60'/0'",
+		ChildPath:   "/0/015",
+		FullPath:    "m/44'/60'/0'/0/015",
+	}
+	err := svc.RunSignSession(context.Background(), SignSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "sign-1",
+			OrgID:     "org-1",
+			KeyID:     "key-1",
+			Parties:   []string{"p1", "p2", "p3"},
+			Threshold: 2,
+			Algorithm: AlgorithmECDSA,
+			Curve:     CurveSecp256k1,
+		},
+		LocalPartyID:      "p1",
+		Digest:            []byte{1, 2, 3},
+		DerivationContext: &ctx,
+		Transport:         noopTransport{},
+	})
+	if !errors.Is(err, ErrDerivationPathInvalid) {
+		t.Fatalf("expected ErrDerivationPathInvalid, got %v", err)
+	}
+}
+
 func validDKGRequestWithMaterial() DKGSessionRequest {
 	return DKGSessionRequest{
 		Session: SessionDescriptor{

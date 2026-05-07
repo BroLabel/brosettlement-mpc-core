@@ -289,6 +289,13 @@ func TestRunDKGThenSign_NoStoreKeepsRunnerShare(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
 	}
+	material, ok := runner.materialByKey["key-1"]
+	if !ok {
+		t.Fatal("expected no-store DKG to keep full key material in runner")
+	}
+	if len(material.ChainCode) != 32 {
+		t.Fatalf("expected stored chain code, got %d bytes", len(material.ChainCode))
+	}
 	hash, err := corederivation.HashV1(validServiceDerivationContext())
 	if err != nil {
 		t.Fatalf("HashV1 returned error: %v", err)

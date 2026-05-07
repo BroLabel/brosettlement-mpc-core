@@ -28,6 +28,7 @@ type stubRunner struct {
 	lastDKGJob          tssbnbrunner.DKGJob
 	lastSignJob         tssbnbrunner.SignJob
 	shareByKey          map[string]ecdsakeygen.LocalPartySaveData
+	materialByKey       map[string]coreshares.ECDSAKeyMaterial
 	exportedKeys        []string
 	deletedKeys         []string
 	events              []string
@@ -43,6 +44,14 @@ func (r *stubRunner) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySave
 		return ecdsakeygen.LocalPartySaveData{}, errShareMissing
 	}
 	return share, nil
+}
+
+func (r *stubRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
+	r.events = append(r.events, "export-material:"+key)
+	if material, ok := r.materialByKey[key]; ok {
+		return material, nil
+	}
+	return coreshares.ECDSAKeyMaterial{}, errShareMissing
 }
 
 func (r *stubRunner) DeleteECDSAKeyShare(key string) {
@@ -78,6 +87,17 @@ func (r *stubRunner) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalParty
 		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
 	}
 	r.shareByKey[key] = data
+}
+
+func (r *stubRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
+	if r.materialByKey == nil {
+		r.materialByKey = map[string]coreshares.ECDSAKeyMaterial{}
+	}
+	if r.shareByKey == nil {
+		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
+	}
+	r.materialByKey[key] = material
+	r.shareByKey[key] = material.Share
 }
 
 func (r *stubRunner) ECDSAAddress(string) (string, error) {
@@ -190,4 +210,20 @@ func (s *failingShareStore) SaveShare(context.Context, string, []byte, coreshare
 
 func (s *failingShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
 	return nil, coreshares.ErrShareNotFound
+}
+
+type staticShareStore struct {
+	stored *coreshares.StoredShare
+	err    error
+}
+
+func (s staticShareStore) SaveShare(context.Context, string, []byte, coreshares.ShareMeta) error {
+	return nil
+}
+
+func (s staticShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.stored, nil
 }

@@ -197,18 +197,32 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 }
 
 func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	normalized, err := NormalizeDerivationContext(*req.DerivationContext)
+	if err != nil {
+		return err
+	}
+	hash, err := DerivationContextHashV1(normalized)
+	if err != nil {
+		return err
+	}
 	return s.impl.RunSignSession(ctx, tssservice.SignInput{
-		SessionID:        req.Session.SessionID,
-		LocalPartyID:     req.LocalPartyID,
-		OrgID:            req.Session.OrgID,
-		KeyID:            req.Session.KeyID,
-		Parties:          req.Session.Parties,
-		Digest:           req.Digest,
-		Algorithm:        req.Session.Algorithm,
-		Chain:            req.Session.Chain,
-		Transport:        req.Transport,
-		EmptyKeyErr:      ErrShareNotFound,
-		MetadataMismatch: ErrMetadataMismatch,
+		SessionID:             req.Session.SessionID,
+		LocalPartyID:          req.LocalPartyID,
+		OrgID:                 req.Session.OrgID,
+		KeyID:                 req.Session.KeyID,
+		Parties:               req.Session.Parties,
+		Digest:                req.Digest,
+		Algorithm:             req.Session.Algorithm,
+		Curve:                 req.Session.Curve,
+		Chain:                 req.Session.Chain,
+		DerivationContext:     toCoreDerivationContext(normalized),
+		DerivationContextHash: hash,
+		Transport:             req.Transport,
+		EmptyKeyErr:           ErrShareNotFound,
+		MetadataMismatch:      ErrMetadataMismatch,
 	})
 }
 

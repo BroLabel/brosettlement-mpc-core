@@ -1,17 +1,24 @@
 package tss
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
+	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
+	"github.com/bnb-chain/tss-lib/common"
+	"github.com/bnb-chain/tss-lib/crypto"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
 
 type noopTransport struct{}
@@ -99,6 +106,48 @@ func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 	}
 }
 
+func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalService(t *testing.T) {
+	runner := newFacadeDerivedRunner(t, "key-1")
+	svc := newService(runner, slog.Default(), nil, nil, nil)
+	ctx := validFacadeDerivationContext()
+	ctx.Algorithm = " ECDSA "
+	ctx.Curve = " SECP256K1 "
+	ctx.Scheme = " BIP32_SECP256K1 "
+	normalized, err := NormalizeDerivationContext(ctx)
+	if err != nil {
+		t.Fatalf("NormalizeDerivationContext returned error: %v", err)
+	}
+	expectedHash, err := DerivationContextHashV1(normalized)
+	if err != nil {
+		t.Fatalf("DerivationContextHashV1 returned error: %v", err)
+	}
+
+	err = svc.RunSignSession(context.Background(), SignSessionRequest{
+		Session: SessionDescriptor{
+			SessionID: "sign-1",
+			OrgID:     "org",
+			KeyID:     "key-1",
+			Parties:   []string{"p1", "p2"},
+			Threshold: 1,
+			Algorithm: AlgorithmECDSA,
+			Curve:     CurveSecp256k1,
+		},
+		LocalPartyID:      "p1",
+		Digest:            []byte{1, 2, 3},
+		DerivationContext: &ctx,
+		Transport:         noopTransport{},
+	})
+	if err != nil {
+		t.Fatalf("RunSignSession returned error: %v", err)
+	}
+	if runner.lastSignJob.DerivationContextHash != expectedHash {
+		t.Fatalf("DerivationContextHash = %q, want %q", runner.lastSignJob.DerivationContextHash, expectedHash)
+	}
+	if ctx.Algorithm != " ECDSA " {
+		t.Fatalf("RunSignSession mutated caller context: %+v", ctx)
+	}
+}
+
 func validDKGRequestWithMaterial() DKGSessionRequest {
 	return DKGSessionRequest{
 		Session: SessionDescriptor{
@@ -117,6 +166,85 @@ func validDKGRequestWithMaterial() DKGSessionRequest {
 		},
 		Transport: noopTransport{},
 	}
+}
+
+func validFacadeDerivationContext() DerivationContext {
+	return DerivationContext{
+		ProfileID:   "profile-1",
+		Algorithm:   AlgorithmECDSA,
+		Curve:       CurveSecp256k1,
+		Scheme:      DerivationSchemeBIP32Secp256k1,
+		AccountPath: "m/44'/60'/0'",
+		ChildPath:   "/0/15",
+		FullPath:    "m/44'/60'/0'/0/15",
+	}
+}
+
+type facadeDerivedRunner struct {
+	materialByKey map[string]coreshares.ECDSAKeyMaterial
+	lastSignJob   tssbnbrunner.SignJob
+}
+
+func newFacadeDerivedRunner(t *testing.T, keyID string) *facadeDerivedRunner {
+	t.Helper()
+	pub := crypto.ScalarBaseMult(tsslib.S256(), big.NewInt(5))
+	xj := crypto.ScalarBaseMult(tsslib.S256(), big.NewInt(7))
+	if pub == nil || xj == nil {
+		t.Fatal("expected secp256k1 test points")
+	}
+	share := ecdsakeygen.LocalPartySaveData{
+		ECDSAPub: pub,
+		BigXj:    []*crypto.ECPoint{xj},
+	}
+	return &facadeDerivedRunner{
+		materialByKey: map[string]coreshares.ECDSAKeyMaterial{
+			keyID: {
+				Share:            share,
+				ChainCode:        bytes.Repeat([]byte{0x11}, 32),
+				PublicKeyFormat:  corederivation.PublicKeyFormatUncompressedHex,
+				DerivationScheme: corederivation.DerivationSchemeBIP32Secp256k1,
+			},
+		},
+	}
+}
+
+func (r *facadeDerivedRunner) RunDKG(context.Context, tssbnbrunner.DKGJob, tssbnbrunner.Transport) error {
+	return nil
+}
+
+func (r *facadeDerivedRunner) RunSign(_ context.Context, job tssbnbrunner.SignJob, _ tssbnbrunner.Transport) error {
+	r.lastSignJob = job
+	return nil
+}
+
+func (r *facadeDerivedRunner) ExportECDSASignature(string) (common.SignatureData, error) {
+	return common.SignatureData{}, nil
+}
+
+func (r *facadeDerivedRunner) ExportECDSAKeyShare(string) (ecdsakeygen.LocalPartySaveData, error) {
+	return ecdsakeygen.LocalPartySaveData{}, ErrShareNotFound
+}
+
+func (r *facadeDerivedRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
+	material, ok := r.materialByKey[key]
+	if !ok {
+		return coreshares.ECDSAKeyMaterial{}, ErrShareNotFound
+	}
+	return material, nil
+}
+
+func (r *facadeDerivedRunner) ImportECDSAKeyShare(string, ecdsakeygen.LocalPartySaveData) {}
+
+func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
+	r.materialByKey[key] = material
+}
+
+func (r *facadeDerivedRunner) DeleteECDSAKeyShare(key string) {
+	delete(r.materialByKey, key)
+}
+
+func (r *facadeDerivedRunner) ECDSAAddress(string) (string, error) {
+	return "", nil
 }
 
 func TestNewBnbServiceReturnsFacade(t *testing.T) {

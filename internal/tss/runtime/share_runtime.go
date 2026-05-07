@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
@@ -36,6 +37,7 @@ type SignPrepareInput struct {
 	KeyID            string
 	OrgID            string
 	Algorithm        string
+	Curve            string
 	EmptyKeyErr      error
 	MetadataMismatch error
 }
@@ -75,7 +77,7 @@ func PrepareShareForSign(ctx context.Context, store ShareStore, runner Runner, i
 	}
 	stored, err := store.LoadShare(ctx, keyID)
 	if err == nil {
-		err = ValidateLoadedMeta(keyID, in.OrgID, in.Algorithm, stored.Meta, in.MetadataMismatch)
+		err = ValidateLoadedMeta(keyID, in.OrgID, in.Algorithm, in.Curve, stored.Meta, in.MetadataMismatch)
 	}
 	if err != nil {
 		return nil, err
@@ -109,7 +111,7 @@ func DeriveECDSAOutputFromShare(share ecdsakeygen.LocalPartySaveData, missingPub
 	}, nil
 }
 
-func ValidateLoadedMeta(keyID, orgID, algorithm string, meta coreshares.ShareMeta, metadataMismatchErr error) error {
+func ValidateLoadedMeta(keyID, orgID, algorithm, curve string, meta coreshares.ShareMeta, metadataMismatchErr error) error {
 	if meta.KeyID != "" && meta.KeyID != keyID {
 		return metadataMismatchErr
 	}
@@ -121,6 +123,13 @@ func ValidateLoadedMeta(keyID, orgID, algorithm string, meta coreshares.ShareMet
 		alg = "ecdsa"
 	}
 	if meta.Algorithm != "" && !strings.EqualFold(meta.Algorithm, alg) {
+		return metadataMismatchErr
+	}
+	expectedCurve := strings.ToLower(strings.TrimSpace(curve))
+	if expectedCurve == "" && alg == "ecdsa" {
+		expectedCurve = corederivation.CurveSecp256k1
+	}
+	if meta.Curve != "" && !strings.EqualFold(meta.Curve, expectedCurve) {
 		return metadataMismatchErr
 	}
 	return nil

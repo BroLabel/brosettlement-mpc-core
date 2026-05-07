@@ -208,6 +208,7 @@ func (r *BnbRunner) DeleteECDSAKeyShare(key string) {
 	}
 	r.mu.Lock()
 	delete(r.ecdsaKeys, key)
+	delete(r.ecdsaMaterials, key)
 	r.mu.Unlock()
 }
 

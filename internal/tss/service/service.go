@@ -98,6 +98,7 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		logEnd(err)
 		return DKGOutput{}, err
 	}
+	importNoStoreECDSAKeyMaterial(s.runner, s.shareStore, keyID, share, material)
 	if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, job, keyID, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
@@ -108,21 +109,22 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 
 func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 	job := tssbnbrunner.SignJob{
-		SessionID:    in.SessionID,
-		LocalPartyID: in.LocalPartyID,
-		OrgID:        in.OrgID,
-		KeyID:        in.KeyID,
-		Parties:      in.Parties,
-		Digest:       append([]byte(nil), in.Digest...),
-		Algorithm:    in.Algorithm,
-		Chain:        in.Chain,
+		SessionID:             in.SessionID,
+		LocalPartyID:          in.LocalPartyID,
+		OrgID:                 in.OrgID,
+		KeyID:                 in.KeyID,
+		Parties:               in.Parties,
+		Digest:                append([]byte(nil), in.Digest...),
+		Algorithm:             in.Algorithm,
+		Chain:                 in.Chain,
+		DerivationContextHash: in.DerivationContextHash,
 	}
 
 	tsslogging.LogSessionStart(s.logger, "sign", in.SessionID, in.OrgID, in.KeyID, in.LocalPartyID)
 	started := time.Now()
-	cleanup, err := prepareShareForSign(ctx, s.shareStore, s.runner, job, in.EmptyKeyErr, in.MetadataMismatch)
+	var err error
+	job, err = prepareDerivedECDSASignJob(ctx, s.shareStore, s.runner, job, in)
 	if err == nil {
-		defer cleanup()
 		err = s.runner.RunSign(ctx, job, in.Transport)
 	}
 	if err == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssruntime "github.com/BroLabel/brosettlement-mpc-core/internal/tss/runtime"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -88,6 +89,18 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareStore ShareStore, runne
 	}
 	runner.DeleteECDSAKeyShare(sessionID)
 	return nil
+}
+
+func importNoStoreECDSAKeyMaterial(runner Runner, shareStore ShareStore, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) {
+	if shareStore != nil || len(material.ChainCode) != 32 {
+		return
+	}
+	runner.ImportECDSAKeyMaterial(keyID, coreshares.ECDSAKeyMaterial{
+		Share:            share,
+		ChainCode:        append([]byte(nil), material.ChainCode...),
+		PublicKeyFormat:  corederivation.PublicKeyFormatUncompressedHex,
+		DerivationScheme: material.Scheme,
+	})
 }
 
 func resolveDKGOutputKeyID(in DKGInput, algorithm string) (string, error) {

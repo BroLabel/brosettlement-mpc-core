@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
@@ -288,14 +289,21 @@ func TestRunDKGThenSign_NoStoreKeepsRunnerShare(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
 	}
+	hash, err := corederivation.HashV1(validServiceDerivationContext())
+	if err != nil {
+		t.Fatalf("HashV1 returned error: %v", err)
+	}
 	if err := svc.RunSignSession(context.Background(), SignInput{
-		SessionID:    "sign-1",
-		KeyID:        "key-1",
-		LocalPartyID: "p1",
-		OrgID:        "org",
-		Parties:      []string{"p1", "p2"},
-		Digest:       []byte{1, 2, 3},
-		Algorithm:    "ecdsa",
+		SessionID:             "sign-1",
+		KeyID:                 "key-1",
+		LocalPartyID:          "p1",
+		OrgID:                 "org",
+		Parties:               []string{"p1", "p2"},
+		Digest:                []byte{1, 2, 3},
+		Algorithm:             "ecdsa",
+		Curve:                 "secp256k1",
+		DerivationContext:     validServiceDerivationContext(),
+		DerivationContextHash: hash,
 	}); err != nil {
 		t.Fatalf("expected in-memory sign to keep working, got %v", err)
 	}

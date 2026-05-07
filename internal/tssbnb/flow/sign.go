@@ -21,15 +21,17 @@ import (
 )
 
 var (
-	ErrSignDigestRequired       = errors.New("sign digest is required")
-	ErrSignAlgorithmUnsupported = errors.New("sign supports only ecdsa")
+	ErrSignDigestRequired         = errors.New("sign digest is required")
+	ErrSignAlgorithmUnsupported   = errors.New("sign supports only ecdsa")
+	ErrKeyDerivationDeltaRequired = errors.New("key derivation delta is required")
 )
 
 type SignBuildInput struct {
-	Digest   []byte
-	Params   *tsslib.Parameters
-	KeyShare ecdsakeygen.LocalPartySaveData
-	OutCh    chan<- tsslib.Message
+	Digest             []byte
+	Params             *tsslib.Parameters
+	KeyShare           ecdsakeygen.LocalPartySaveData
+	KeyDerivationDelta *big.Int
+	OutCh              chan<- tsslib.Message
 }
 
 type SignBuildOutput struct {
@@ -44,6 +46,7 @@ type SignRunJob struct {
 	Parties               []string
 	Digest                []byte
 	Algorithm             string
+	KeyDerivationDelta    *big.Int
 	DerivationContextHash string
 }
 
@@ -60,12 +63,15 @@ type SignRunInput struct {
 	OnSignature func(*common.SignatureData)
 }
 
-func BuildSign(in SignBuildInput) SignBuildOutput {
+func BuildSign(in SignBuildInput) (SignBuildOutput, error) {
+	if in.KeyDerivationDelta == nil {
+		return SignBuildOutput{}, ErrKeyDerivationDeltaRequired
+	}
 	rawEndCh := make(chan *common.SignatureData, 1)
 
 	tssEndCh := make(chan common.SignatureData, 1)
 	msg := new(big.Int).SetBytes(in.Digest)
-	party := ecdsasigning.NewLocalParty(msg, in.Params, in.KeyShare, in.OutCh, tssEndCh)
+	party := ecdsasigning.NewLocalPartyWithKDD(msg, in.Params, in.KeyShare, in.KeyDerivationDelta, in.OutCh, tssEndCh)
 	go func() {
 		defer close(rawEndCh)
 
@@ -73,7 +79,7 @@ func BuildSign(in SignBuildInput) SignBuildOutput {
 		sig := <-tssEndCh
 		rawEndCh <- cloneSignatureData(&sig)
 	}()
-	return SignBuildOutput{Party: party, End: rawEndCh}
+	return SignBuildOutput{Party: party, End: rawEndCh}, nil
 }
 
 func RunSign(ctx context.Context, in SignRunInput) error {
@@ -156,12 +162,16 @@ func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, l
 	}
 
 	outCh := make(chan tsslib.Message, len(job.Parties)*8)
-	built := BuildSign(SignBuildInput{
-		Digest:   job.Digest,
-		Params:   params,
-		KeyShare: keyShare,
-		OutCh:    outCh,
+	built, err := BuildSign(SignBuildInput{
+		Digest:             job.Digest,
+		Params:             params,
+		KeyShare:           keyShare,
+		KeyDerivationDelta: job.KeyDerivationDelta,
+		OutCh:              outCh,
 	})
+	if err != nil {
+		return nil, err
+	}
 	return execution.New(execution.Params{
 		SessionID:             job.SessionID,
 		LocalPartyID:          job.LocalPartyID,

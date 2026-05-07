@@ -1,12 +1,17 @@
 package bnb
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"math/big"
+	"strings"
 	"testing"
 	"time"
 
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 
 type testMetrics struct{}
@@ -65,5 +70,41 @@ func TestNewBnbRunner_WithConfig(t *testing.T) {
 
 	if runner.cfg != cfg {
 		t.Fatalf("expected custom config to be set, got %+v", runner.cfg)
+	}
+}
+
+func TestRunSignDoesNotFallbackFromKeyIDToSessionID(t *testing.T) {
+	runner := NewBnbRunner(slog.Default())
+	runner.ImportECDSAKeyShare("session-1", ecdsakeygen.LocalPartySaveData{})
+
+	err := runner.RunSign(context.Background(), SignJob{
+		SessionID:             "session-1",
+		KeyID:                 "key-1",
+		Parties:               []string{"p1", "p2"},
+		Digest:                []byte{1, 2, 3},
+		Algorithm:             "ecdsa",
+		KeyDerivationDelta:    big.NewInt(1),
+		DerivationContextHash: strings.Repeat("a", 64),
+	}, nil)
+	if !errors.Is(err, ErrKeyShareNotFound) {
+		t.Fatalf("expected ErrKeyShareNotFound, got %v", err)
+	}
+}
+
+func TestRunSignRejectsMissingAdjustedKeyShare(t *testing.T) {
+	runner := NewBnbRunner(slog.Default())
+	runner.ImportECDSAKeyShare("key-1", ecdsakeygen.LocalPartySaveData{})
+
+	err := runner.RunSign(context.Background(), SignJob{
+		SessionID:             "sign-1",
+		KeyID:                 "key-1",
+		Parties:               []string{"p1", "p2"},
+		Digest:                []byte{1, 2, 3},
+		Algorithm:             "ecdsa",
+		KeyDerivationDelta:    big.NewInt(1),
+		DerivationContextHash: strings.Repeat("a", 64),
+	}, nil)
+	if !errors.Is(err, ErrKeyShareNotFound) {
+		t.Fatalf("expected ErrKeyShareNotFound, got %v", err)
 	}
 }

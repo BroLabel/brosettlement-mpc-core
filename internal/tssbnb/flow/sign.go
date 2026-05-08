@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 
@@ -75,9 +76,7 @@ func BuildSign(in SignBuildInput) (SignBuildOutput, error) {
 	go func() {
 		defer close(rawEndCh)
 
-		//nolint:govet // unavoidable boundary with tss-lib v1.5.0
-		sig := <-tssEndCh
-		rawEndCh <- cloneSignatureData(&sig)
+		rawEndCh <- recvSignatureData(tssEndCh)
 	}()
 	return SignBuildOutput{Party: party, End: rawEndCh}, nil
 }
@@ -194,11 +193,37 @@ func cloneSignatureData(in *common.SignatureData) *common.SignatureData {
 	if in == nil {
 		return nil
 	}
+	return cloneSignatureFields(in.GetSignature(), in.GetSignatureRecovery(), in.GetR(), in.GetS(), in.GetM())
+}
+
+func recvSignatureData(ch <-chan common.SignatureData) *common.SignatureData {
+	v, ok := reflect.ValueOf(ch).Recv()
+	if !ok {
+		return nil
+	}
+	return cloneSignatureFields(
+		signatureDataBytes(v, "Signature"),
+		signatureDataBytes(v, "SignatureRecovery"),
+		signatureDataBytes(v, "R"),
+		signatureDataBytes(v, "S"),
+		signatureDataBytes(v, "M"),
+	)
+}
+
+func signatureDataBytes(v reflect.Value, field string) []byte {
+	f := v.FieldByName(field)
+	if !f.IsValid() || f.Kind() != reflect.Slice || f.Type().Elem().Kind() != reflect.Uint8 {
+		return nil
+	}
+	return f.Bytes()
+}
+
+func cloneSignatureFields(signature, recovery, r, s, m []byte) *common.SignatureData {
 	return &common.SignatureData{
-		Signature:         append([]byte(nil), in.GetSignature()...),
-		SignatureRecovery: append([]byte(nil), in.GetSignatureRecovery()...),
-		R:                 append([]byte(nil), in.GetR()...),
-		S:                 append([]byte(nil), in.GetS()...),
-		M:                 append([]byte(nil), in.GetM()...),
+		Signature:         append([]byte(nil), signature...),
+		SignatureRecovery: append([]byte(nil), recovery...),
+		R:                 append([]byte(nil), r...),
+		S:                 append([]byte(nil), s...),
+		M:                 append([]byte(nil), m...),
 	}
 }

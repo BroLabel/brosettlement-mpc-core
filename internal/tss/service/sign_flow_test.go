@@ -138,6 +138,34 @@ func TestRunSignSession_MissingChainCodeFailsBeforeRunnerStart(t *testing.T) {
 	}
 }
 
+func TestRunSignSession_WrongLengthChainCodeMapsToMissingBeforeRunnerStart(t *testing.T) {
+	runner := newDerivedECDSAStubRunner(t, "key-1")
+	material := runner.materialByKey["key-1"]
+	material.ChainCode = []byte{0x11}
+	runner.materialByKey["key-1"] = material
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)
+
+	err := svc.RunSignSession(context.Background(), SignInput{
+		SessionID:         "sign-1",
+		LocalPartyID:      "p1",
+		OrgID:             "org",
+		KeyID:             "key-1",
+		Parties:           []string{"p1", "p2"},
+		Digest:            []byte{1, 2, 3},
+		Algorithm:         "ecdsa",
+		Curve:             "secp256k1",
+		DerivationContext: validServiceDerivationContext(),
+		EmptyKeyErr:       errShareMissing,
+		MetadataMismatch:  errShareMissing,
+	})
+	if !errors.Is(err, corederivation.ErrChainCodeMissing) {
+		t.Fatalf("expected ErrChainCodeMissing, got %v", err)
+	}
+	if runner.lastSignJob.SessionID != "" {
+		t.Fatalf("runner started unexpectedly: %+v", runner.lastSignJob)
+	}
+}
+
 func TestRunSignSession_DerivationContextHashMismatchFailsBeforeRunnerStart(t *testing.T) {
 	runner := newDerivedECDSAStubRunner(t, "key-1")
 	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)

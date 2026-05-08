@@ -19,11 +19,8 @@ func prepareDerivedECDSASignJob(ctx context.Context, shareStore ShareStore, runn
 	if err != nil {
 		return job, err
 	}
-	if len(material.ChainCode) == 0 {
-		return job, corederivation.ErrChainCodeMissing
-	}
 	if len(material.ChainCode) != 32 {
-		return job, corederivation.ErrChainCodeInvalid
+		return job, corederivation.ErrChainCodeMissing
 	}
 	if material.DerivationScheme != corederivation.DerivationSchemeBIP32Secp256k1 {
 		return job, fmt.Errorf("%w: stored scheme=%s", corederivation.ErrUnsupportedDerivationScheme, material.DerivationScheme)

@@ -44,7 +44,7 @@
 - Test: `tss/derivation_test.go`
 - Test: `tss/service_test.go`
 
-- [ ] **Step 1: Write the failing public contract tests**
+- [x] **Step 1: Write the failing public contract tests**
 
 Add these tests to `tss/derivation_test.go`.
 
@@ -113,13 +113,13 @@ func TestDerivationErrorsPreserveErrorsIs(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify the contract is missing**
+- [x] **Step 2: Run tests to verify the contract is missing**
 
 Run: `go test ./tss -run 'TestPublicDerivationConstants|TestSignSessionRequestValidateRequiresDerivationContext|TestDerivationErrorsPreserveErrorsIs' -count=1`
 
 Expected: FAIL to compile because `DerivationContext`, derivation constants, public errors, and `wrapPublicDerivationError` do not exist.
 
-- [ ] **Step 3: Add internal sentinels and public aliases**
+- [x] **Step 3: Add internal sentinels and public aliases**
 
 Create `internal/tss/derivation/errors.go`.
 
@@ -226,7 +226,7 @@ func wrapPublicDerivationError(base error, msg string) error {
 }
 ```
 
-- [ ] **Step 4: Extend public request structs and nil-context validation**
+- [x] **Step 4: Extend public request structs and nil-context validation**
 
 Modify `tss/service.go`.
 
@@ -273,13 +273,13 @@ func (r SignSessionRequest) Validate() error {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify the skeleton passes**
+- [x] **Step 5: Run tests to verify the skeleton passes**
 
 Run: `go test ./tss -run 'TestPublicDerivationConstants|TestSignSessionRequestValidateRequiresDerivationContext|TestDerivationErrorsPreserveErrorsIs|TestSignSessionRequestValidateRequiresDigest' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit the public skeleton**
+- [x] **Step 6: Commit the public skeleton**
 
 ```bash
 git add internal/tss/derivation/errors.go tss/derivation.go tss/derivation_test.go tss/service.go
@@ -299,7 +299,7 @@ git commit -m "feat: add derived signing public contract"
 - Test: `internal/tss/derivation`
 - Test: `tss`
 
-- [ ] **Step 1: Write failing normalization tests**
+- [x] **Step 1: Write failing normalization tests**
 
 Create `internal/tss/derivation/context_test.go`.
 
@@ -438,13 +438,13 @@ func TestValidateUncompressedSecp256k1HexRejectsNonCanonicalEncodings(t *testing
 }
 ```
 
-- [ ] **Step 2: Run tests to verify normalization is missing**
+- [x] **Step 2: Run tests to verify normalization is missing**
 
 Run: `go test ./internal/tss/derivation ./tss -run 'TestNormalizeContext|TestValidateUncompressedSecp256k1Hex' -count=1`
 
 Expected: FAIL because the internal derivation package and public normalization functions do not exist.
 
-- [ ] **Step 3: Implement internal context and path types**
+- [x] **Step 3: Implement internal context and path types**
 
 Create `internal/tss/derivation/context.go`.
 
@@ -717,7 +717,7 @@ func CanonicalFullPath(accountPath, childPath string) string {
 }
 ```
 
-- [ ] **Step 4: Implement canonical public key validation**
+- [x] **Step 4: Implement canonical public key validation**
 
 Create `internal/tss/derivation/public_key.go`.
 
@@ -776,7 +776,7 @@ func EncodeECPointUncompressedSecp256k1(point *tsscrypto.ECPoint) (string, error
 }
 ```
 
-- [ ] **Step 5: Wire public normalization wrappers**
+- [x] **Step 5: Wire public normalization wrappers**
 
 Modify `tss/derivation.go`.
 
@@ -842,13 +842,13 @@ func fromCoreDerivationContext(in corederivation.Context) DerivationContext {
 
 Update `SignSessionRequest.Validate()` to call `validateDerivationContextForSession(*r.DerivationContext, r.Session)` after the nil-context check.
 
-- [ ] **Step 6: Run normalization tests**
+- [x] **Step 6: Run normalization tests**
 
 Run: `go test ./internal/tss/derivation ./tss -run 'TestNormalizeContext|TestValidateUncompressedSecp256k1Hex|TestSignSessionRequestValidate' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit normalization**
+- [x] **Step 7: Commit normalization**
 
 ```bash
 git add internal/tss/derivation/context.go internal/tss/derivation/path.go internal/tss/derivation/public_key.go internal/tss/derivation/context_test.go internal/tss/derivation/path_test.go internal/tss/derivation/public_key_test.go tss/derivation.go tss/service.go
@@ -864,7 +864,7 @@ git commit -m "feat: normalize derivation context"
 - Test: `internal/tss/derivation`
 - Test: `tss`
 
-- [ ] **Step 1: Write failing hash tests**
+- [x] **Step 1: Write failing hash tests**
 
 Create `internal/tss/derivation/hash_test.go`.
 
@@ -975,13 +975,13 @@ func TestHashV1ChangesOnCommitmentAndVersionFields(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify hash support is missing**
+- [x] **Step 2: Run tests to verify hash support is missing**
 
 Run: `go test ./internal/tss/derivation ./tss -run 'TestHashV1|TestDerivationContextHashV1' -count=1`
 
 Expected: FAIL because `HashV1`, `CanonicalHashPayloadV1`, and public `DerivationContextHashV1` are missing.
 
-- [ ] **Step 3: Implement ordered canonical hash payload**
+- [x] **Step 3: Implement ordered canonical hash payload**
 
 Create `internal/tss/derivation/hash.go`.
 
@@ -1098,7 +1098,7 @@ func appendJSONString(dst []byte, s string) []byte {
 }
 ```
 
-- [ ] **Step 4: Add public hash wrapper without mutating input**
+- [x] **Step 4: Add public hash wrapper without mutating input**
 
 Modify `tss/derivation.go`.
 
@@ -1131,13 +1131,13 @@ func TestDerivationContextHashV1DoesNotMutateInput(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Run hash tests**
+- [x] **Step 5: Run hash tests**
 
 Run: `go test ./internal/tss/derivation ./tss -run 'TestHashV1|TestDerivationContextHashV1' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit hash binding primitive**
+- [x] **Step 6: Commit hash binding primitive**
 
 ```bash
 git add internal/tss/derivation/hash.go internal/tss/derivation/hash_test.go tss/derivation.go tss/derivation_test.go
@@ -1154,7 +1154,7 @@ git commit -m "feat: add derivation context hash"
 - Test: `internal/shares`
 - Test: `tss`
 
-- [ ] **Step 1: Write failing key-material codec tests**
+- [x] **Step 1: Write failing key-material codec tests**
 
 Update `internal/shares/codec_test.go`.
 
@@ -1214,13 +1214,13 @@ func TestShareWrappersUseV2Envelope(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify key-material codec is missing**
+- [x] **Step 2: Run tests to verify key-material codec is missing**
 
 Run: `go test ./internal/shares ./tss -run 'TestMarshalUnmarshalKeyMaterial|TestUnmarshalKeyMaterialRejectsLegacyV1ShareBlob|TestShareWrappersUseV2Envelope' -count=1`
 
 Expected: FAIL because `ECDSAKeyMaterial`, `MarshalKeyMaterial`, and `UnmarshalKeyMaterial` do not exist.
 
-- [ ] **Step 3: Implement v2 material envelope**
+- [x] **Step 3: Implement v2 material envelope**
 
 Modify `internal/shares/codec.go`.
 
@@ -1291,7 +1291,7 @@ func UnmarshalShare(blob []byte) (ecdsakeygen.LocalPartySaveData, error) {
 }
 ```
 
-- [ ] **Step 4: Add metadata diagnostics and public aliases**
+- [x] **Step 4: Add metadata diagnostics and public aliases**
 
 Modify `internal/shares/metadata.go`.
 
@@ -1325,13 +1325,13 @@ func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 }
 ```
 
-- [ ] **Step 5: Run codec tests**
+- [x] **Step 5: Run codec tests**
 
 Run: `go test ./internal/shares ./tss -run 'TestMarshalUnmarshal|TestUnmarshalShare|TestShareWrappersUseV2Envelope' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit key-material codec**
+- [x] **Step 6: Commit key-material codec**
 
 ```bash
 git add internal/shares/codec.go internal/shares/metadata.go internal/shares/codec_test.go tss/sharestore.go
@@ -1352,7 +1352,7 @@ git commit -m "feat: store ecdsa key material envelope"
 - Test: `tss`
 - Test: `internal/tss/service`
 
-- [ ] **Step 1: Write failing DKG material tests**
+- [x] **Step 1: Write failing DKG material tests**
 
 Add public facade tests in `tss/service_test.go`.
 
@@ -1472,13 +1472,13 @@ func TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial(t *testing.
 }
 ```
 
-- [ ] **Step 2: Run DKG tests to verify material flow is missing**
+- [x] **Step 2: Run DKG tests to verify material flow is missing**
 
 Run: `go test ./tss ./internal/tss/service -run 'TestDKGSessionRequestValidate|TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial' -count=1`
 
 Expected: FAIL because DKG derivation material is not validated, not passed internally, not included in `DKGOutput`, and not persisted.
 
-- [ ] **Step 3: Add DKG material to public and internal inputs**
+- [x] **Step 3: Add DKG material to public and internal inputs**
 
 Modify `internal/tss/service/types.go`.
 
@@ -1532,7 +1532,7 @@ if req.DerivationMaterial != nil {
 
 Include `DerivationMaterial: material` and `EmptyKeyErr: ErrKeyIDRequired` in the `tssservice.DKGInput` passed to `s.impl.RunDKGSession`.
 
-- [ ] **Step 4: Validate chain code and scheme at the boundary**
+- [x] **Step 4: Validate chain code and scheme at the boundary**
 
 Create `internal/tss/derivation/ecdsa.go` with `ValidateDKGMaterial` and `ParseChainCodeHex`.
 
@@ -1739,7 +1739,7 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareStore ShareStore, runne
 }
 ```
 
-- [ ] **Step 5: Persist key material after successful DKG**
+- [x] **Step 5: Persist key material after successful DKG**
 
 Modify `internal/tss/runtime/share_runtime.go`.
 
@@ -1771,7 +1771,7 @@ func PersistKeyMaterialAfterDKG(ctx context.Context, store ShareStore, share ecd
 
 Update `tss/utils/share_helpers.go` so `DKGShareMeta` accepts the new diagnostic fields and sets `Version: 2`.
 
-- [ ] **Step 6: Include supplied chain code in DKG output**
+- [x] **Step 6: Include supplied chain code in DKG output**
 
 Modify `internal/tss/service/dkg.go`.
 
@@ -1805,13 +1805,13 @@ func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material norm
 
 Do not reuse the current `derived.PublicKey` field for the output contract; it can be produced from a non-secp256k1 curve. The output public key must come from `corederivation.EncodeECPointUncompressedSecp256k1`.
 
-- [ ] **Step 7: Run DKG material tests**
+- [x] **Step 7: Run DKG material tests**
 
 Run: `go test ./tss ./internal/tss/service ./internal/tss/runtime -run 'TestDKGSessionRequestValidate|TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial|TestRunDKGSession_EdDSAReturnsKeyIDOnly' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit DKG material flow**
+- [x] **Step 8: Commit DKG material flow**
 
 ```bash
 git add tss/service.go tss/service_test.go internal/tss/derivation/ecdsa.go internal/tss/service/types.go internal/tss/service/dkg.go internal/tss/service/dkg_flow_test.go internal/tss/runtime/share_runtime.go tss/utils/share_helpers.go
@@ -1827,7 +1827,7 @@ git commit -m "feat: persist dkg derivation material"
 - Test: `internal/tss/derivation`
 - Test: `internal/tss/runtime`
 
-- [ ] **Step 1: Write failing BIP32 and KDD tests**
+- [x] **Step 1: Write failing BIP32 and KDD tests**
 
 Create `internal/tss/derivation/ecdsa_test.go`.
 
@@ -1940,13 +1940,13 @@ func TestPrepareECDSASigningShareRejectsDerivedPublicKeyMismatch(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify derivation runtime is missing**
+- [x] **Step 2: Run tests to verify derivation runtime is missing**
 
 Run: `go test ./internal/tss/derivation -run 'TestParseChildPath|TestDeriveECDSAChildKey|TestPrepareECDSASigningShare' -count=1`
 
 Expected: FAIL because `ParseChildPath`, `DeriveECDSAChildKey`, and `PrepareECDSASigningShare` are missing.
 
-- [ ] **Step 3: Implement child derivation using tss-lib CKD**
+- [x] **Step 3: Implement child derivation using tss-lib CKD**
 
 Modify `internal/tss/derivation/ecdsa.go`.
 
@@ -2016,7 +2016,7 @@ func DeriveECDSAChildKey(accountPub *crypto.ECPoint, chainCode []byte, indices [
 }
 ```
 
-- [ ] **Step 4: Implement share-copy adjustment**
+- [x] **Step 4: Implement share-copy adjustment**
 
 Add to `internal/tss/derivation/ecdsa.go`.
 
@@ -2064,13 +2064,13 @@ func cloneECDSAShareForDerivation(share ecdsakeygen.LocalPartySaveData) ecdsakey
 
 `cloneECDSAShareForDerivation` must copy the `BigXj` slice before calling `UpdatePublicKeyAndAdjustBigXj`; the ECPoint values themselves are immutable for this operation because tss-lib replaces slice elements with adjusted points.
 
-- [ ] **Step 5: Run derivation runtime tests**
+- [x] **Step 5: Run derivation runtime tests**
 
 Run: `go test ./internal/tss/derivation -run 'TestParseChildPath|TestDeriveECDSAChildKey|TestPrepareECDSASigningShare' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit derivation runtime**
+- [x] **Step 6: Commit derivation runtime**
 
 ```bash
 git add internal/tss/derivation/ecdsa.go internal/tss/derivation/ecdsa_test.go internal/tss/runtime/share_runtime.go
@@ -2092,7 +2092,7 @@ git commit -m "feat: derive ecdsa child signing material"
 - Test: `internal/tss/service`
 - Test: `tss`
 
-- [ ] **Step 1: Write failing service-level derived signing tests**
+- [x] **Step 1: Write failing service-level derived signing tests**
 
 Update `internal/tss/service/sign_flow_test.go`.
 
@@ -2273,13 +2273,13 @@ func TestRunSignSession_ReservedEdDSAReturnsUnsupportedBeforeRunnerStart(t *test
 }
 ```
 
-- [ ] **Step 2: Run tests to verify service sign flow is still root-signing shaped**
+- [x] **Step 2: Run tests to verify service sign flow is still root-signing shaped**
 
 Run: `go test ./internal/tss/service ./tss -run 'TestRunSignSession_|TestSignSessionRequestValidateRequiresDerivationContext' -count=1`
 
 Expected: FAIL because `SignInput` has no derivation context, runner stubs have no key-material export, and signing does not derive or adjust the share.
 
-- [ ] **Step 3: Extend service and runner interfaces**
+- [x] **Step 3: Extend service and runner interfaces**
 
 Modify `internal/tss/service/types.go`.
 
@@ -2426,7 +2426,7 @@ func (r *BnbRunner) DeleteECDSAKeyShare(key string) {
 }
 ```
 
-- [ ] **Step 4: Load full material and prepare adjusted share**
+- [x] **Step 4: Load full material and prepare adjusted share**
 
 Modify `internal/tss/service/sign.go`.
 
@@ -2576,7 +2576,7 @@ if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, jo
 
 This keeps no-store integration tests working without allowing share-only derived signing.
 
-- [ ] **Step 5: Normalize and hash at the public boundary**
+- [x] **Step 5: Normalize and hash at the public boundary**
 
 Modify `tss/service.go` public `RunSignSession`.
 
@@ -2610,13 +2610,13 @@ return s.impl.RunSignSession(ctx, tssservice.SignInput{
 })
 ```
 
-- [ ] **Step 6: Run service derived signing tests**
+- [x] **Step 6: Run service derived signing tests**
 
 Run: `go test ./internal/tss/service ./tss -run 'TestRunSignSession_|TestSignSessionRequestValidate|TestDerivationContextHashV1' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit service signing boundary**
+- [x] **Step 7: Commit service signing boundary**
 
 ```bash
 git add internal/tss/service/types.go internal/tss/service/sign.go internal/tss/service/service.go internal/tss/service/sign_flow_test.go internal/tss/service/service_testkit_test.go internal/tss/runtime/share_runtime.go internal/tssbnb/runner/bnb_runner.go tss/service.go tss/service_test.go
@@ -2634,7 +2634,7 @@ git commit -m "feat: require derived signing material"
 - Test: `internal/tssbnb/flow`
 - Test: `internal/tssbnb/runner`
 
-- [ ] **Step 1: Write failing KDD guard tests**
+- [x] **Step 1: Write failing KDD guard tests**
 
 Create `internal/tssbnb/flow/sign_test.go`.
 
@@ -2711,13 +2711,13 @@ func TestRunSignRejectsMissingAdjustedKeyShare(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify current flow still allows nil KDD and fallback**
+- [x] **Step 2: Run tests to verify current flow still allows nil KDD and fallback**
 
 Run: `go test ./internal/tssbnb/flow ./internal/tssbnb/runner -run 'TestBuildSignRejectsNilKeyDerivationDelta|TestRunSignDoesNotFallbackFromKeyIDToSessionID|TestRunSignRejectsMissingAdjustedKeyShare' -count=1`
 
 Expected: FAIL because `BuildSign` has no error return and `BnbRunner.RunSign` can still read an unadjusted in-memory share.
 
-- [ ] **Step 3: Require KDD in flow**
+- [x] **Step 3: Require KDD in flow**
 
 Modify `internal/tssbnb/flow/sign.go`.
 
@@ -2799,7 +2799,7 @@ func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, l
 }
 ```
 
-- [ ] **Step 4: Remove runner fallback and pass adjusted share**
+- [x] **Step 4: Remove runner fallback and pass adjusted share**
 
 Modify `internal/tssbnb/runner/types.go`.
 
@@ -2863,7 +2863,7 @@ func isZeroECDSAShare(share ecdsakeygen.LocalPartySaveData) bool {
 }
 ```
 
-- [ ] **Step 5: Add in-memory key material helpers**
+- [x] **Step 5: Add in-memory key material helpers**
 
 Modify `internal/tssbnb/runner/bnb_runner.go`.
 
@@ -2917,13 +2917,13 @@ func (r *BnbRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMater
 }
 ```
 
-- [ ] **Step 6: Run flow and runner tests**
+- [x] **Step 6: Run flow and runner tests**
 
 Run: `go test ./internal/tssbnb/flow ./internal/tssbnb/runner -run 'TestBuildSign|TestSignBuildInput|TestRunSign|TestNewBnbRunner' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit KDD-only signing path**
+- [x] **Step 7: Commit KDD-only signing path**
 
 ```bash
 git add internal/tssbnb/runner/types.go internal/tssbnb/runner/bnb_runner.go internal/tssbnb/runner/bnb_runner_test.go internal/tssbnb/flow/sign.go internal/tssbnb/flow/sign_test.go
@@ -2941,7 +2941,7 @@ git commit -m "feat: force kdd signing path"
 - Test: `protocol`
 - Test: `internal/tssbnb/execution`
 
-- [ ] **Step 1: Write failing frame hash tests**
+- [x] **Step 1: Write failing frame hash tests**
 
 Update `protocol/frame_test.go`.
 
@@ -3011,13 +3011,13 @@ func TestNewOutboundBaseFrameStampsDerivationContextHash(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify frame binding is missing**
+- [x] **Step 2: Run tests to verify frame binding is missing**
 
 Run: `go test ./protocol ./internal/tssbnb/execution -run 'TestFrameCarriesDerivationContextHash|TestValidateInboundSignFrameRequiresMatchingDerivationContextHash' -count=1`
 
 Expected: FAIL because `protocol.Frame` and execution params do not carry the field.
 
-- [ ] **Step 3: Add frame field and execution params**
+- [x] **Step 3: Add frame field and execution params**
 
 Modify `protocol/frame.go`.
 
@@ -3070,30 +3070,30 @@ In the same file, add the runtime field and constructor assignment. Without this
 
 ```diff
  type ProtocolExecution struct {
- 	sessionID     string
- 	localPartyID  string
- 	correlationID string
- 	stage         string
- 	algorithm     string
-+	derivationContextHash string
- 	party         tsslib.Party
- 	partyIDs      map[string]*tsslib.PartyID
- 	outCh         <-chan tsslib.Message
+     sessionID     string
+     localPartyID  string
+     correlationID string
+     stage         string
+     algorithm     string
++    derivationContextHash string
+     party         tsslib.Party
+     partyIDs      map[string]*tsslib.PartyID
+     outCh         <-chan tsslib.Message
 @@
  func New(p Params) *ProtocolExecution {
- 	return &ProtocolExecution{
- 		sessionID:      p.SessionID,
- 		localPartyID:   p.LocalPartyID,
- 		correlationID:  p.CorrelationID,
- 		stage:          p.Stage,
- 		algorithm:      p.Algorithm,
-+		derivationContextHash: p.DerivationContextHash,
- 		party:          p.Party,
- 		partyIDs:       p.PartyIDs,
- 		outCh:          p.OutCh,
+     return &ProtocolExecution{
+         sessionID:      p.SessionID,
+         localPartyID:   p.LocalPartyID,
+         correlationID:  p.CorrelationID,
+         stage:          p.Stage,
+         algorithm:      p.Algorithm,
++        derivationContextHash: p.DerivationContextHash,
+         party:          p.Party,
+         partyIDs:       p.PartyIDs,
+         outCh:          p.OutCh,
 ```
 
-- [ ] **Step 4: Validate inbound and stamp outbound SIGN frames**
+- [x] **Step 4: Validate inbound and stamp outbound SIGN frames**
 
 Add internal error alias in `execution.go`.
 
@@ -3161,7 +3161,7 @@ base := e.newOutboundBaseFrame(outboundFrameInput{
 })
 ```
 
-- [ ] **Step 5: Pass hash from sign flow into execution**
+- [x] **Step 5: Pass hash from sign flow into execution**
 
 Modify `internal/tssbnb/flow/sign.go` `SignRunJob` and `newSignExecution` to carry `DerivationContextHash` into `execution.Params`.
 
@@ -3169,13 +3169,13 @@ Modify `internal/tssbnb/flow/sign.go` `SignRunJob` and `newSignExecution` to car
 DerivationContextHash: job.DerivationContextHash,
 ```
 
-- [ ] **Step 6: Run frame hash tests**
+- [x] **Step 6: Run frame hash tests**
 
 Run: `go test ./protocol ./internal/tssbnb/execution ./internal/tssbnb/flow -run 'TestFrameCarriesDerivationContextHash|TestValidateInboundSignFrameRequiresMatchingDerivationContextHash|TestBuildSign' -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit frame hash binding**
+- [x] **Step 7: Commit frame hash binding**
 
 ```bash
 git add protocol/frame.go protocol/frame_test.go internal/tssbnb/execution/execution.go internal/tssbnb/execution/execution_test.go internal/tssbnb/flow/sign.go
@@ -3191,7 +3191,7 @@ git commit -m "feat: bind derivation context hash to sign frames"
 - Modify: `README.md`
 - Test: all Go packages
 
-- [ ] **Step 1: Update existing ECDSA tests to use derivation material and context**
+- [x] **Step 1: Update existing ECDSA tests to use derivation material and context**
 
 Change all ECDSA DKG service tests that call `RunDKGSession` to include the same deterministic chain code.
 
@@ -3226,7 +3226,7 @@ if len(material.ChainCode) != 32 {
 }
 ```
 
-- [ ] **Step 2: Add negative public SIGN regression tests**
+- [x] **Step 2: Add negative public SIGN regression tests**
 
 Add these tests to `tss/service_test.go`.
 
@@ -3284,7 +3284,7 @@ func TestRunSignSessionRejectsInvalidDerivationContextBeforeInternalService(t *t
 }
 ```
 
-- [ ] **Step 3: Update README public behavior**
+- [x] **Step 3: Update README public behavior**
 
 Add this section to `README.md`.
 
@@ -3309,19 +3309,19 @@ Core does not store derivation profiles, prove profile or account-path ownership
 EdDSA derivation values are reserved in the public contract, but derived EdDSA signing returns `tss.ErrDerivedSigningUnsupported` in this scope.
 ```
 
-- [ ] **Step 4: Run targeted package tests**
+- [x] **Step 4: Run targeted package tests**
 
 Run: `go test ./tss ./internal/shares ./internal/tss/derivation ./internal/tss/runtime ./internal/tss/service ./internal/tssbnb/flow ./internal/tssbnb/runner ./internal/tssbnb/execution ./protocol -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full test suite**
+- [x] **Step 5: Run full test suite**
 
 Run: `go test ./... -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit tests and docs**
+- [x] **Step 6: Commit tests and docs**
 
 ```bash
 git add internal/tss/service/dkg_flow_test.go internal/tss/service/sign_flow_test.go tss/service_test.go README.md
@@ -3353,12 +3353,6 @@ git commit -m "test: cover derived signing contract"
 - `DerivationContextHash` is stored on `ProtocolExecution` and used on outbound and inbound SIGN frames in Task 9.
 - README updates and full verification are covered by Task 10.
 
-## Execution Handoff
+## Execution Status
 
-Plan complete and saved to `docs/superpowers/plans/2026-05-06-hd-derived-signing-core.md`. Two execution options:
-
-**1. Subagent-Driven (recommended)** - dispatch a fresh subagent per task, review between tasks, fast iteration
-
-**2. Inline Execution** - execute tasks in this session using executing-plans, batch execution with checkpoints
-
-Which approach?
+Implemented on branch `feat-hd-wallets`. Checklist entries are marked complete to keep the plan aligned with the current code state.

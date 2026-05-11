@@ -234,16 +234,6 @@ func (s *Service) ECDSAAddress(key string) (string, error) {
 	return s.impl.ECDSAAddress(key)
 }
 
-func isValidSessionDescriptor(session SessionDescriptor) bool {
-	return tssrequests.IsValidSessionDescriptor(tssrequests.SessionDescriptor{
-		SessionID: session.SessionID,
-		OrgID:     session.OrgID,
-		KeyID:     session.KeyID,
-		Parties:   session.Parties,
-		Threshold: session.Threshold,
-	})
-}
-
 func (r DKGSessionRequest) Validate() error {
 	err := tssrequests.ValidateDKG(tssrequests.DKGRequest{
 		Session: tssrequests.SessionDescriptor{

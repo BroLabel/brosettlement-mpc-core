@@ -2,7 +2,6 @@ package derivation
 
 import (
 	"errors"
-	"fmt"
 )
 
 var (
@@ -16,13 +15,3 @@ var (
 	ErrDerivedSigningUnsupported   = errors.New("derived signing unsupported")
 	ErrUnsupportedAlgorithmCurve   = errors.New("unsupported algorithm curve")
 )
-
-func Wrap(base error, msg string) error {
-	if base == nil {
-		return nil
-	}
-	if msg == "" {
-		return base
-	}
-	return fmt.Errorf("%w: %s", base, msg)
-}

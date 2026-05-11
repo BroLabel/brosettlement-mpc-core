@@ -189,13 +189,6 @@ func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, l
 	}), nil
 }
 
-func cloneSignatureData(in *common.SignatureData) *common.SignatureData {
-	if in == nil {
-		return nil
-	}
-	return cloneSignatureFields(in.GetSignature(), in.GetSignatureRecovery(), in.GetR(), in.GetS(), in.GetM())
-}
-
 func recvSignatureData(ch <-chan common.SignatureData) *common.SignatureData {
 	v, ok := reflect.ValueOf(ch).Recv()
 	if !ok {

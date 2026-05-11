@@ -101,15 +101,6 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newECDSATestShare(t *testing.T) ecdsakeygen.LocalPartySaveData {
-	t.Helper()
-	pub := crypto.ScalarBaseMult(elliptic.P256(), big.NewInt(1))
-	if pub == nil {
-		t.Fatal("expected test public key point")
-	}
-	return ecdsakeygen.LocalPartySaveData{ECDSAPub: pub}
-}
-
 func newECDSATestShareWithCurve(t *testing.T, curve elliptic.Curve) ecdsakeygen.LocalPartySaveData {
 	t.Helper()
 	pub := crypto.ScalarBaseMult(curve, big.NewInt(1))
@@ -117,16 +108,6 @@ func newECDSATestShareWithCurve(t *testing.T, curve elliptic.Curve) ecdsakeygen.
 		t.Fatal("expected test public key point")
 	}
 	return ecdsakeygen.LocalPartySaveData{ECDSAPub: pub}
-}
-
-func newECDSAStubRunner(t *testing.T, sessionID string) *stubRunner {
-	t.Helper()
-	share := newECDSATestShare(t)
-	return &stubRunner{
-		shareByKey: map[string]ecdsakeygen.LocalPartySaveData{
-			sessionID: share,
-		},
-	}
 }
 
 func newECDSAStubRunnerWithoutPub(t *testing.T, sessionID string) *stubRunner {

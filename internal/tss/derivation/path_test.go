@@ -32,3 +32,10 @@ func TestNormalizeAccountPathCanonicalizesHardenedMarkers(t *testing.T) {
 		t.Fatalf("NormalizeAccountPath = %q", got)
 	}
 }
+
+func TestNormalizeAccountPathRejectsRoot(t *testing.T) {
+	_, err := NormalizeAccountPath("m")
+	if !errors.Is(err, ErrInvalidDerivationContext) {
+		t.Fatalf("expected ErrInvalidDerivationContext, got %v", err)
+	}
+}

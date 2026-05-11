@@ -81,11 +81,8 @@ func normalizeEdDSAContext(out Context) (Context, error) {
 
 func NormalizeAccountPath(raw string) (string, error) {
 	s := strings.TrimSpace(raw)
-	if s == "" || s != "m" && !strings.HasPrefix(s, "m/") {
+	if s == "" || s == "m" || !strings.HasPrefix(s, "m/") {
 		return "", fmt.Errorf("%w: account_path=%q", ErrInvalidDerivationContext, raw)
-	}
-	if s == "m" {
-		return "m", nil
 	}
 
 	parts := strings.Split(strings.TrimPrefix(s, "m/"), "/")

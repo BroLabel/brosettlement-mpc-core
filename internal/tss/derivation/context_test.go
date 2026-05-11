@@ -62,6 +62,7 @@ func TestNormalizeContextRejectsBadECDSAInputs(t *testing.T) {
 	}{
 		{name: "missing profile", edit: func(c *Context) { c.ProfileID = "" }, want: ErrInvalidDerivationContext},
 		{name: "missing account path", edit: func(c *Context) { c.AccountPath = "" }, want: ErrInvalidDerivationContext},
+		{name: "root account path", edit: func(c *Context) { c.AccountPath = "m"; c.FullPath = "" }, want: ErrInvalidDerivationContext},
 		{name: "absolute child path", edit: func(c *Context) { c.ChildPath = "m/0/15" }, want: ErrDerivationPathInvalid},
 		{name: "hardened child apostrophe", edit: func(c *Context) { c.ChildPath = "/0/15'" }, want: ErrDerivationPathInvalid},
 		{name: "hardened child h", edit: func(c *Context) { c.ChildPath = "/0h/15" }, want: ErrDerivationPathInvalid},

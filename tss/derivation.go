@@ -76,6 +76,18 @@ func DerivationContextHashV1(in DerivationContext) (string, error) {
 	return corederivation.HashV1(toCoreDerivationContext(in))
 }
 
+func DeriveECDSAChildPublicKey(accountPublicKey string, chainCode []byte, ctx DerivationContext) (string, error) {
+	accountPub, err := corederivation.DecodeUncompressedSecp256k1Hex(accountPublicKey)
+	if err != nil {
+		return "", err
+	}
+	child, err := corederivation.DeriveECDSAChildKeyForContext(accountPub, chainCode, toCoreDerivationContext(ctx))
+	if err != nil {
+		return "", err
+	}
+	return child.PublicKeyHex, nil
+}
+
 func validateDerivationContextForSession(ctx DerivationContext, session SessionDescriptor) error {
 	normalized, err := corederivation.NormalizeContext(toCoreDerivationContext(ctx))
 	if err != nil {

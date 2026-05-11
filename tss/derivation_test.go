@@ -1,6 +1,7 @@
 package tss
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 )
@@ -77,5 +78,63 @@ func TestDerivationContextHashV1DoesNotMutateInput(t *testing.T) {
 	}
 	if in != before {
 		t.Fatalf("hash mutated input: before=%+v after=%+v", before, in)
+	}
+}
+
+func TestDeriveECDSAChildPublicKeyKnownVector(t *testing.T) {
+	ctx := validPublicECDSADerivationContext()
+	accountPublicKey := "042f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4d8ac222636e5e3d6d4dba9dda6c9c426f788271bab0d6840dca87d3aa6ac62d6"
+	chainCode := bytes.Repeat([]byte{0x11}, 32)
+
+	got, err := DeriveECDSAChildPublicKey(accountPublicKey, chainCode, ctx)
+	if err != nil {
+		t.Fatalf("DeriveECDSAChildPublicKey returned error: %v", err)
+	}
+
+	want := "04697096f8cdd7e6c33c78b63a9a07fe94fcdcc5cc00a8087f013abcdc2de12b217fd91fdeff350c0da379f70ffcab88c5f33bf9d1bcb5eb70e56ab9a8a99347e7"
+	if got != want {
+		t.Fatalf("child public key mismatch\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestDeriveECDSAChildPublicKeyRejectsInvalidPath(t *testing.T) {
+	ctx := validPublicECDSADerivationContext()
+	ctx.ChildPath = "/0/01"
+	ctx.FullPath = ""
+
+	_, err := DeriveECDSAChildPublicKey(validAccountPublicKeyHex, bytes.Repeat([]byte{0x11}, 32), ctx)
+	if !errors.Is(err, ErrDerivationPathInvalid) {
+		t.Fatalf("expected ErrDerivationPathInvalid, got %v", err)
+	}
+}
+
+func TestDeriveECDSAChildPublicKeyRejectsWrongChainCodeLength(t *testing.T) {
+	_, err := DeriveECDSAChildPublicKey(validAccountPublicKeyHex, bytes.Repeat([]byte{0x11}, 31), validPublicECDSADerivationContext())
+	if !errors.Is(err, ErrChainCodeInvalid) {
+		t.Fatalf("expected ErrChainCodeInvalid, got %v", err)
+	}
+}
+
+func TestDeriveECDSAChildPublicKeyRejectsDerivedPublicKeyMismatch(t *testing.T) {
+	ctx := validPublicECDSADerivationContext()
+	ctx.DerivedPublicKey = validAccountPublicKeyHex
+
+	_, err := DeriveECDSAChildPublicKey(validAccountPublicKeyHex, bytes.Repeat([]byte{0x11}, 32), ctx)
+	if !errors.Is(err, ErrDerivationContextMismatch) {
+		t.Fatalf("expected ErrDerivationContextMismatch, got %v", err)
+	}
+}
+
+const validAccountPublicKeyHex = "042f8bde4d1a07209355b4a7250a5c5128e88b84bddc619ab7cba8d569b240efe4d8ac222636e5e3d6d4dba9dda6c9c426f788271bab0d6840dca87d3aa6ac62d6"
+
+func validPublicECDSADerivationContext() DerivationContext {
+	return DerivationContext{
+		ProfileID:   "profile-1",
+		Algorithm:   AlgorithmECDSA,
+		Curve:       CurveSecp256k1,
+		Scheme:      DerivationSchemeBIP32Secp256k1,
+		AccountPath: "m/44'/60'/0'",
+		ChildPath:   "/0/15",
+		FullPath:    "m/44'/60'/0'/0/15",
 	}
 }

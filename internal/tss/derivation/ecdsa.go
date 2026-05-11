@@ -108,25 +108,33 @@ func DeriveECDSAChildKey(accountPub *crypto.ECPoint, chainCode []byte, indices [
 	}, nil
 }
 
-func PrepareECDSASigningShare(share ecdsakeygen.LocalPartySaveData, chainCode []byte, ctx Context) (PreparedECDSASigningShare, error) {
+func DeriveECDSAChildKeyForContext(accountPub *crypto.ECPoint, chainCode []byte, ctx Context) (ECDSAChildKey, error) {
 	normalized, err := NormalizeContext(ctx)
 	if err != nil {
-		return PreparedECDSASigningShare{}, err
+		return ECDSAChildKey{}, err
 	}
 	if normalized.Algorithm != AlgorithmECDSA || normalized.Curve != CurveSecp256k1 {
-		return PreparedECDSASigningShare{}, fmt.Errorf("%w: %s/%s", ErrUnsupportedAlgorithmCurve, normalized.Algorithm, normalized.Curve)
+		return ECDSAChildKey{}, fmt.Errorf("%w: %s/%s", ErrUnsupportedAlgorithmCurve, normalized.Algorithm, normalized.Curve)
 	}
 
 	indices, err := ParseChildPath(normalized.ChildPath)
 	if err != nil {
-		return PreparedECDSASigningShare{}, err
+		return ECDSAChildKey{}, err
 	}
-	child, err := DeriveECDSAChildKey(share.ECDSAPub, chainCode, indices)
+	child, err := DeriveECDSAChildKey(accountPub, chainCode, indices)
 	if err != nil {
-		return PreparedECDSASigningShare{}, err
+		return ECDSAChildKey{}, err
 	}
 	if normalized.DerivedPublicKey != "" && normalized.DerivedPublicKey != child.PublicKeyHex {
-		return PreparedECDSASigningShare{}, fmt.Errorf("%w: derived_public_key mismatch", ErrDerivationContextMismatch)
+		return ECDSAChildKey{}, fmt.Errorf("%w: derived_public_key mismatch", ErrDerivationContextMismatch)
+	}
+	return child, nil
+}
+
+func PrepareECDSASigningShare(share ecdsakeygen.LocalPartySaveData, chainCode []byte, ctx Context) (PreparedECDSASigningShare, error) {
+	child, err := DeriveECDSAChildKeyForContext(share.ECDSAPub, chainCode, ctx)
+	if err != nil {
+		return PreparedECDSASigningShare{}, err
 	}
 
 	adjusted := cloneECDSAShareForDerivation(share)

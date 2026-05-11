@@ -32,6 +32,29 @@ func ValidateUncompressedSecp256k1Hex(input string) error {
 	return nil
 }
 
+func DecodeUncompressedSecp256k1Hex(input string) (*tsscrypto.ECPoint, error) {
+	if input == "" {
+		return nil, fmt.Errorf("%w: secp256k1 public key missing", ErrInvalidDerivationContext)
+	}
+	if err := ValidateUncompressedSecp256k1Hex(input); err != nil {
+		return nil, err
+	}
+
+	decoded, err := hex.DecodeString(input)
+	if err != nil || len(decoded) != 65 {
+		return nil, fmt.Errorf("%w: secp256k1 public key invalid", ErrInvalidDerivationContext)
+	}
+	x, y := elliptic.Unmarshal(tsslib.S256(), decoded)
+	if x == nil || y == nil {
+		return nil, fmt.Errorf("%w: secp256k1 public key invalid", ErrInvalidDerivationContext)
+	}
+	point, err := tsscrypto.NewECPoint(tsslib.S256(), x, y)
+	if err != nil {
+		return nil, fmt.Errorf("%w: secp256k1 public key invalid", ErrInvalidDerivationContext)
+	}
+	return point, nil
+}
+
 func EncodeUncompressedSecp256k1(pub *ecdsa.PublicKey) string {
 	curve := tsslib.S256()
 	if pub == nil || pub.X == nil || pub.Y == nil || !curve.IsOnCurve(pub.X, pub.Y) {

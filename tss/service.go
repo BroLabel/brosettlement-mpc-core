@@ -230,19 +230,6 @@ func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error)
 	return s.impl.ExportECDSASignature(key)
 }
 
-func (s *Service) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
-	return s.impl.ExportECDSAKeyShare(key)
-}
-
-func (s *Service) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData) error {
-	s.impl.ImportECDSAKeyShare(key, data)
-	return nil
-}
-
-func (s *Service) DeleteECDSAKeyShare(key string) {
-	s.impl.DeleteECDSAKeyShare(key)
-}
-
 func (s *Service) ECDSAAddress(key string) (string, error) {
 	return s.impl.ECDSAAddress(key)
 }

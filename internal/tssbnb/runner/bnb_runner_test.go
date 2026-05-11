@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
@@ -75,7 +76,7 @@ func TestNewBnbRunner_WithConfig(t *testing.T) {
 
 func TestRunSignDoesNotFallbackFromKeyIDToSessionID(t *testing.T) {
 	runner := NewBnbRunner(slog.Default())
-	runner.ImportECDSAKeyShare("session-1", ecdsakeygen.LocalPartySaveData{})
+	runner.setTemporaryECDSADKGShare("session-1", ecdsakeygen.LocalPartySaveData{})
 
 	err := runner.RunSign(context.Background(), SignJob{
 		SessionID:             "session-1",
@@ -93,7 +94,7 @@ func TestRunSignDoesNotFallbackFromKeyIDToSessionID(t *testing.T) {
 
 func TestRunSignRejectsMissingAdjustedKeyShare(t *testing.T) {
 	runner := NewBnbRunner(slog.Default())
-	runner.ImportECDSAKeyShare("key-1", ecdsakeygen.LocalPartySaveData{})
+	runner.setTemporaryECDSADKGShare("key-1", ecdsakeygen.LocalPartySaveData{})
 
 	err := runner.RunSign(context.Background(), SignJob{
 		SessionID:             "sign-1",
@@ -106,5 +107,25 @@ func TestRunSignRejectsMissingAdjustedKeyShare(t *testing.T) {
 	}, nil)
 	if !errors.Is(err, ErrKeyShareNotFound) {
 		t.Fatalf("expected ErrKeyShareNotFound, got %v", err)
+	}
+}
+
+func TestDeleteTemporaryECDSADKGSharePreservesKeyMaterial(t *testing.T) {
+	runner := NewBnbRunner(slog.Default())
+	runner.setTemporaryECDSADKGShare("key-1", ecdsakeygen.LocalPartySaveData{})
+	runner.ImportECDSAKeyMaterial("key-1", coreshares.ECDSAKeyMaterial{
+		Share:            ecdsakeygen.LocalPartySaveData{},
+		ChainCode:        []byte{0x11},
+		PublicKeyFormat:  "uncompressed_hex",
+		DerivationScheme: "bip32_secp256k1",
+	})
+
+	runner.DeleteTemporaryECDSADKGShare("key-1")
+
+	if _, ok := runner.getTemporaryECDSADKGShare("key-1"); ok {
+		t.Fatal("expected temporary DKG share to be deleted")
+	}
+	if _, err := runner.ExportECDSAKeyMaterial("key-1"); err != nil {
+		t.Fatalf("expected key material to remain, got %v", err)
 	}
 }

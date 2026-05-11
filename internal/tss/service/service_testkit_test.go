@@ -36,7 +36,7 @@ type stubRunner struct {
 	signatureExported   bool
 }
 
-func (r *stubRunner) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
+func (r *stubRunner) ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
 	r.events = append(r.events, "export:"+key)
 	r.exportedKeys = append(r.exportedKeys, key)
 	share, ok := r.shareByKey[key]
@@ -54,7 +54,7 @@ func (r *stubRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMate
 	return coreshares.ECDSAKeyMaterial{}, errShareMissing
 }
 
-func (r *stubRunner) DeleteECDSAKeyShare(key string) {
+func (r *stubRunner) DeleteTemporaryECDSADKGShare(key string) {
 	r.events = append(r.events, "cleanup:"+key)
 	r.deletedKeys = append(r.deletedKeys, key)
 	delete(r.shareByKey, key)
@@ -80,13 +80,6 @@ func (r *stubRunner) RunSign(_ context.Context, job tssbnbrunner.SignJob, _ core
 func (r *stubRunner) ExportECDSASignature(string) (common.SignatureData, error) {
 	r.signatureExported = true
 	return common.SignatureData{}, nil
-}
-
-func (r *stubRunner) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData) {
-	if r.shareByKey == nil {
-		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
-	}
-	r.shareByKey[key] = data
 }
 
 func (r *stubRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {

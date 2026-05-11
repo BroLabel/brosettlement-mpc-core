@@ -60,15 +60,3 @@ func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 		DerivationScheme: env.Meta.DerivationScheme,
 	}, nil
 }
-
-func MarshalShare(share ecdsakeygen.LocalPartySaveData) ([]byte, error) {
-	return MarshalKeyMaterial(ECDSAKeyMaterial{Share: share})
-}
-
-func UnmarshalShare(blob []byte) (ecdsakeygen.LocalPartySaveData, error) {
-	material, err := UnmarshalKeyMaterial(blob)
-	if err != nil {
-		return ecdsakeygen.LocalPartySaveData{}, err
-	}
-	return material.Share, nil
-}

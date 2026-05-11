@@ -3356,3 +3356,5 @@ git commit -m "test: cover derived signing contract"
 ## Execution Status
 
 Implemented on branch `feat-hd-wallets`. Checklist entries are marked complete to keep the plan aligned with the current code state.
+
+Post-implementation cleanup removed public share-only APIs and dead internal share-only persistence/sign-loading helpers. Historical snippets above that mention `MarshalShare`, `UnmarshalShare`, `ImportECDSAKeyShare`, or service-level ECDSA share import/export are superseded by the current key-material-only implementation. Internal DKG-only share access is intentionally named `ExportTemporaryECDSADKGShare`, `DeleteTemporaryECDSADKGShare`, and `temporaryECDSADKGShares`.

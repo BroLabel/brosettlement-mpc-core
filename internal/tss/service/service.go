@@ -8,7 +8,6 @@ import (
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	"log/slog"
 )
 
@@ -136,18 +135,6 @@ func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 
 func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error) {
 	return s.runner.ExportECDSASignature(key)
-}
-
-func (s *Service) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
-	return s.runner.ExportECDSAKeyShare(key)
-}
-
-func (s *Service) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData) {
-	s.runner.ImportECDSAKeyShare(key, data)
-}
-
-func (s *Service) DeleteECDSAKeyShare(key string) {
-	s.runner.DeleteECDSAKeyShare(key)
 }
 
 func (s *Service) ECDSAAddress(key string) (string, error) {

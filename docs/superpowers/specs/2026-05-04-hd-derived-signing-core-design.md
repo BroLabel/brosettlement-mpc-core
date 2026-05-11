@@ -360,12 +360,11 @@ func MarshalKeyMaterial(material ECDSAKeyMaterial) ([]byte, error)
 func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error)
 ```
 
-`MarshalShare` and `UnmarshalShare` can remain compatibility wrappers for existing callers.
-If retained, share-only wrappers are deprecated source-compatibility helpers and must not decode legacy v1 blobs.
+Remove share-only `MarshalShare` and `UnmarshalShare` wrappers from the public API.
 New DKG persistence and derived signing paths must use key material APIs.
 
 The in-memory runner store should also store `ECDSAKeyMaterial`, not only `LocalPartySaveData`.
-Existing share import/export helpers can remain wrappers around the material store.
+Public share import/export helpers are removed; internal runner share access remains only where DKG needs temporary local output and cleanup.
 Derived signing must load full key material and reject missing chain code.
 
 The child-adjusted `LocalPartySaveData` used for signing is a runtime copy only.

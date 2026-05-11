@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -273,7 +274,7 @@ func (r *facadeDerivedRunner) ExportECDSASignature(string) (common.SignatureData
 	return common.SignatureData{}, nil
 }
 
-func (r *facadeDerivedRunner) ExportECDSAKeyShare(string) (ecdsakeygen.LocalPartySaveData, error) {
+func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(string) (ecdsakeygen.LocalPartySaveData, error) {
 	return ecdsakeygen.LocalPartySaveData{}, ErrShareNotFound
 }
 
@@ -285,13 +286,11 @@ func (r *facadeDerivedRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECD
 	return material, nil
 }
 
-func (r *facadeDerivedRunner) ImportECDSAKeyShare(string, ecdsakeygen.LocalPartySaveData) {}
-
 func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
 	r.materialByKey[key] = material
 }
 
-func (r *facadeDerivedRunner) DeleteECDSAKeyShare(key string) {
+func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key string) {
 	delete(r.materialByKey, key)
 }
 
@@ -312,6 +311,21 @@ func TestNewBnbServiceReturnsFacade(t *testing.T) {
 	var zero DKGOutput
 	if zero != (DKGOutput{}) {
 		t.Fatalf("expected zero-value output type, got %+v", zero)
+	}
+}
+
+func TestServiceDoesNotExposeShareOnlyAPI(t *testing.T) {
+	serviceType := reflect.TypeOf((*Service)(nil))
+	for _, name := range []string{
+		"ExportECDSAKeyShare",
+		"ImportECDSAKeyShare",
+		"DeleteECDSAKeyShare",
+		"ExportTemporaryECDSADKGShare",
+		"DeleteTemporaryECDSADKGShare",
+	} {
+		if _, ok := serviceType.MethodByName(name); ok {
+			t.Fatalf("Service still exposes share-only method %s", name)
+		}
 	}
 }
 

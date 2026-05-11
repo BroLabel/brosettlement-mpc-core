@@ -18,11 +18,6 @@ type ShareStore interface {
 	LoadShare(ctx context.Context, keyID string) (*coreshares.StoredShare, error)
 }
 
-type Runner interface {
-	ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData)
-	DeleteECDSAKeyShare(key string)
-}
-
 type DKGPersistInput struct {
 	KeyID            string
 	OrgID            string
@@ -33,27 +28,9 @@ type DKGPersistInput struct {
 	DerivationScheme string
 }
 
-type SignPrepareInput struct {
-	KeyID            string
-	OrgID            string
-	Algorithm        string
-	Curve            string
-	EmptyKeyErr      error
-	MetadataMismatch error
-}
-
 type DerivedECDSAOutput struct {
 	PublicKey string
 	Address   string
-}
-
-func PersistShareAfterDKG(ctx context.Context, store ShareStore, share ecdsakeygen.LocalPartySaveData, in DKGPersistInput) error {
-	blob, err := coreshares.MarshalShare(share)
-	if err == nil {
-		defer tssutils.ZeroBytes(blob)
-		err = store.SaveShare(ctx, in.KeyID, blob, tssutils.DKGShareMeta(in.KeyID, in.OrgID, in.Algorithm, in.Curve, len(in.ChainCode) == 32, in.PublicKeyFormat, in.DerivationScheme))
-	}
-	return err
 }
 
 func PersistKeyMaterialAfterDKG(ctx context.Context, store ShareStore, share ecdsakeygen.LocalPartySaveData, in DKGPersistInput) error {
@@ -68,29 +45,6 @@ func PersistKeyMaterialAfterDKG(ctx context.Context, store ShareStore, share ecd
 	}
 	defer tssutils.ZeroBytes(blob)
 	return store.SaveShare(ctx, in.KeyID, blob, tssutils.DKGShareMeta(in.KeyID, in.OrgID, in.Algorithm, in.Curve, len(in.ChainCode) == 32, in.PublicKeyFormat, in.DerivationScheme))
-}
-
-func PrepareShareForSign(ctx context.Context, store ShareStore, runner Runner, in SignPrepareInput) (func(), error) {
-	keyID, err := tssutils.NormalizeKeyID(in.KeyID, in.EmptyKeyErr)
-	if err != nil {
-		return nil, err
-	}
-	stored, err := store.LoadShare(ctx, keyID)
-	if err == nil {
-		err = ValidateLoadedMeta(keyID, in.OrgID, in.Algorithm, in.Curve, stored.Meta, in.MetadataMismatch)
-	}
-	if err != nil {
-		return nil, err
-	}
-	share, err := coreshares.UnmarshalShare(stored.Blob)
-	defer tssutils.ZeroBytes(stored.Blob)
-	if err != nil {
-		return nil, err
-	}
-	runner.ImportECDSAKeyShare(keyID, share)
-	return func() {
-		runner.DeleteECDSAKeyShare(keyID)
-	}, nil
 }
 
 func DeriveECDSAOutputFromShare(share ecdsakeygen.LocalPartySaveData, missingPublicKeyErr, missingAddressErr error) (DerivedECDSAOutput, error) {

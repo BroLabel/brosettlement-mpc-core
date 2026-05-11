@@ -63,16 +63,3 @@ func loadECDSAKeyMaterial(ctx context.Context, shareStore ShareStore, runner Run
 	defer tssutils.ZeroBytes(stored.Blob)
 	return coreshares.UnmarshalKeyMaterial(stored.Blob)
 }
-
-func prepareShareForSign(ctx context.Context, shareStore ShareStore, runner Runner, job tssbnbrunner.SignJob, emptyKeyErr, metadataMismatch error) (func(), error) {
-	if shareStore == nil || !tssutils.IsECDSA(job.Algorithm) {
-		return func() {}, nil
-	}
-	return tssruntime.PrepareShareForSign(ctx, shareStore, runner, tssruntime.SignPrepareInput{
-		KeyID:            job.KeyID,
-		OrgID:            job.OrgID,
-		Algorithm:        job.Algorithm,
-		EmptyKeyErr:      emptyKeyErr,
-		MetadataMismatch: metadataMismatch,
-	})
-}

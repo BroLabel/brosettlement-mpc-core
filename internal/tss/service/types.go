@@ -18,11 +18,10 @@ type Runner interface {
 	RunDKG(ctx context.Context, job tssbnbrunner.DKGJob, transport coretransport.FrameTransport) error
 	RunSign(ctx context.Context, job tssbnbrunner.SignJob, transport coretransport.FrameTransport) error
 	ExportECDSASignature(key string) (common.SignatureData, error)
-	ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error)
+	ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error)
 	ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error)
-	ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData)
 	ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial)
-	DeleteECDSAKeyShare(key string)
+	DeleteTemporaryECDSADKGShare(key string)
 	ECDSAAddress(key string) (string, error)
 }
 

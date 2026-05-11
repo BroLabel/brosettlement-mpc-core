@@ -47,7 +47,7 @@ func normalizeDKGMaterial(in DKGInput) (normalizedDKGMaterial, error) {
 }
 
 func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material normalizedDKGMaterial) (DKGOutput, ecdsakeygen.LocalPartySaveData, error) {
-	share, err := runner.ExportECDSAKeyShare(in.SessionID)
+	share, err := runner.ExportTemporaryECDSADKGShare(in.SessionID)
 	if err != nil {
 		return DKGOutput{}, ecdsakeygen.LocalPartySaveData{}, err
 	}
@@ -87,7 +87,7 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareStore ShareStore, runne
 	}); err != nil {
 		return err
 	}
-	runner.DeleteECDSAKeyShare(sessionID)
+	runner.DeleteTemporaryECDSADKGShare(sessionID)
 	return nil
 }
 

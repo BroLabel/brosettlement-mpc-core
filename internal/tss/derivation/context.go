@@ -21,10 +21,12 @@ const (
 
 type Context struct {
 	ProfileID         string
+	ProfileTemplateID string
 	Chain             string
 	Algorithm         string
 	Curve             string
 	Scheme            string
+	PublicKeyFormat   string
 	AccountPath       string
 	ChildPath         string
 	FullPath          string
@@ -34,6 +36,7 @@ type Context struct {
 	Descriptor        string
 	DescriptorVersion uint32
 	ProfileVersion    uint32
+	KeyVersion        uint32
 }
 
 type Session struct {
@@ -45,16 +48,21 @@ type Session struct {
 func NormalizeContext(in Context) (Context, error) {
 	out := in
 	out.ProfileID = strings.TrimSpace(out.ProfileID)
+	out.ProfileTemplateID = strings.TrimSpace(out.ProfileTemplateID)
 	out.Chain = strings.TrimSpace(out.Chain)
 	out.Algorithm = strings.ToLower(strings.TrimSpace(out.Algorithm))
 	out.Curve = strings.ToLower(strings.TrimSpace(out.Curve))
 	out.Scheme = strings.ToLower(strings.TrimSpace(out.Scheme))
+	out.PublicKeyFormat = strings.ToLower(strings.TrimSpace(out.PublicKeyFormat))
 
 	if out.ProfileID == "" {
 		return Context{}, fmt.Errorf("%w: profile_id is required", ErrInvalidDerivationContext)
 	}
 	if out.Algorithm == "" {
 		out.Algorithm = AlgorithmECDSA
+	}
+	if out.PublicKeyFormat == "" && out.Algorithm == AlgorithmECDSA {
+		out.PublicKeyFormat = PublicKeyFormatUncompressedHex
 	}
 	if out.Curve == "" && out.Algorithm == AlgorithmECDSA {
 		out.Curve = CurveSecp256k1

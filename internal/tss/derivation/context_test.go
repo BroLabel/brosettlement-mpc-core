@@ -7,14 +7,16 @@ import (
 
 func validECDSAContext() Context {
 	return Context{
-		ProfileID:   "profile-1",
-		Chain:       "ethereum",
-		Algorithm:   " ECDSA ",
-		Curve:       " SECP256K1 ",
-		Scheme:      "bip32_public",
-		AccountPath: "m/44h/60H/0'",
-		ChildPath:   "/0/15",
-		FullPath:    "m/44'/60'/0'/0/15",
+		ProfileID:         "profile-1",
+		ProfileTemplateID: " template-1 ",
+		Chain:             "ethereum",
+		Algorithm:         " ECDSA ",
+		Curve:             " SECP256K1 ",
+		Scheme:            "bip32_public",
+		PublicKeyFormat:   " UNCOMPRESSED_HEX ",
+		AccountPath:       "m/44h/60H/0'",
+		ChildPath:         "/0/15",
+		FullPath:          "m/44'/60'/0'/0/15",
 	}
 }
 
@@ -31,6 +33,12 @@ func TestNormalizeContextCanonicalizesECDSAAliasAndPaths(t *testing.T) {
 	}
 	if got.Scheme != DerivationSchemeBIP32Secp256k1 {
 		t.Fatalf("Scheme = %q", got.Scheme)
+	}
+	if got.ProfileTemplateID != "template-1" {
+		t.Fatalf("ProfileTemplateID = %q", got.ProfileTemplateID)
+	}
+	if got.PublicKeyFormat != PublicKeyFormatUncompressedHex {
+		t.Fatalf("PublicKeyFormat = %q", got.PublicKeyFormat)
 	}
 	if got.AccountPath != "m/44'/60'/0'" {
 		t.Fatalf("AccountPath = %q", got.AccountPath)

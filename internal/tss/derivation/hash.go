@@ -22,10 +22,12 @@ func CanonicalHashPayloadV1(in Context) ([]byte, error) {
 		value string
 	}{
 		{"profile_id", ctx.ProfileID},
+		{"profile_template_id", ctx.ProfileTemplateID},
 		{"chain", ctx.Chain},
 		{"algorithm", ctx.Algorithm},
 		{"curve", ctx.Curve},
 		{"scheme", ctx.Scheme},
+		{"public_key_format", ctx.PublicKeyFormat},
 		{"account_path", ctx.AccountPath},
 		{"child_path", ctx.ChildPath},
 		{"full_path", ctx.FullPath},
@@ -44,6 +46,7 @@ func CanonicalHashPayloadV1(in Context) ([]byte, error) {
 	}
 	payload = appendJSONUintField(payload, "descriptor_version", ctx.DescriptorVersion)
 	payload = appendJSONUintField(payload, "profile_version", ctx.ProfileVersion)
+	payload = appendJSONUintField(payload, "key_version", ctx.KeyVersion)
 	payload = append(payload, '}')
 	return payload, nil
 }

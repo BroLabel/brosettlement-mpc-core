@@ -34,10 +34,12 @@ var (
 
 type DerivationContext struct {
 	ProfileID         string
+	ProfileTemplateID string
 	Chain             string
 	Algorithm         string
 	Curve             string
 	Scheme            string
+	PublicKeyFormat   string
 	AccountPath       string
 	ChildPath         string
 	FullPath          string
@@ -47,6 +49,7 @@ type DerivationContext struct {
 	Descriptor        string
 	DescriptorVersion uint32
 	ProfileVersion    uint32
+	KeyVersion        uint32
 }
 
 type DKGDerivationMaterial struct {
@@ -103,10 +106,12 @@ func validateDerivationContextForSession(ctx DerivationContext, session SessionD
 func toCoreDerivationContext(in DerivationContext) corederivation.Context {
 	return corederivation.Context{
 		ProfileID:         in.ProfileID,
+		ProfileTemplateID: in.ProfileTemplateID,
 		Chain:             in.Chain,
 		Algorithm:         in.Algorithm,
 		Curve:             in.Curve,
 		Scheme:            in.Scheme,
+		PublicKeyFormat:   in.PublicKeyFormat,
 		AccountPath:       in.AccountPath,
 		ChildPath:         in.ChildPath,
 		FullPath:          in.FullPath,
@@ -116,16 +121,19 @@ func toCoreDerivationContext(in DerivationContext) corederivation.Context {
 		Descriptor:        in.Descriptor,
 		DescriptorVersion: in.DescriptorVersion,
 		ProfileVersion:    in.ProfileVersion,
+		KeyVersion:        in.KeyVersion,
 	}
 }
 
 func fromCoreDerivationContext(in corederivation.Context) DerivationContext {
 	return DerivationContext{
 		ProfileID:         in.ProfileID,
+		ProfileTemplateID: in.ProfileTemplateID,
 		Chain:             in.Chain,
 		Algorithm:         in.Algorithm,
 		Curve:             in.Curve,
 		Scheme:            in.Scheme,
+		PublicKeyFormat:   in.PublicKeyFormat,
 		AccountPath:       in.AccountPath,
 		ChildPath:         in.ChildPath,
 		FullPath:          in.FullPath,
@@ -135,5 +143,6 @@ func fromCoreDerivationContext(in corederivation.Context) DerivationContext {
 		Descriptor:        in.Descriptor,
 		DescriptorVersion: in.DescriptorVersion,
 		ProfileVersion:    in.ProfileVersion,
+		KeyVersion:        in.KeyVersion,
 	}
 }

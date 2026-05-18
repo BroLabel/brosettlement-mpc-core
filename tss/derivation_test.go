@@ -35,7 +35,7 @@ func TestPublicDerivationConstants(t *testing.T) {
 
 func TestSignSessionRequestValidateRequiresDerivationContext(t *testing.T) {
 	req := SignSessionRequest{
-		Session: SessionDescriptor{
+		Session: SignSessionDescriptor{
 			SessionID: "sign-1",
 			OrgID:     "org-1",
 			KeyID:     "key-1",

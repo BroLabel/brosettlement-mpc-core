@@ -19,7 +19,6 @@ type DKGJob struct {
 	Threshold    uint32
 	Curve        string
 	Algorithm    string
-	Chain        string
 	// ECDSAPreParams is optional and speeds up ECDSA DKG when precomputed out-of-band.
 	ECDSAPreParams *ecdsakeygen.LocalPreParams
 }

@@ -15,6 +15,12 @@ import (
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
 
+func TestDKGInputDoesNotExposeChainContext(t *testing.T) {
+	if _, ok := reflect.TypeOf(DKGInput{}).FieldByName("Chain"); ok {
+		t.Fatal("DKG input must not expose chain context")
+	}
+}
+
 func validDKGMaterial() DKGDerivationMaterial {
 	return DKGDerivationMaterial{
 		ChainCode:        strings.Repeat("11", 32),

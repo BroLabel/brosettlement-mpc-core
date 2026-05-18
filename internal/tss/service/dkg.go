@@ -21,7 +21,6 @@ func buildDKGJob(in DKGInput) tssbnbrunner.DKGJob {
 		Threshold:    in.Threshold,
 		Curve:        in.Curve,
 		Algorithm:    in.Algorithm,
-		Chain:        in.Chain,
 	}
 }
 

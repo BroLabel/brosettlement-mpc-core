@@ -56,7 +56,6 @@ type DKGInput struct {
 	Threshold          uint32
 	Curve              string
 	Algorithm          string
-	Chain              string
 	DerivationMaterial DKGDerivationMaterial
 	Transport          coretransport.FrameTransport
 	EmptyKeyErr        error

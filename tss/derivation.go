@@ -91,7 +91,7 @@ func DeriveECDSAChildPublicKey(accountPublicKey string, chainCode []byte, ctx De
 	return child.PublicKeyHex, nil
 }
 
-func validateDerivationContextForSession(ctx DerivationContext, session SessionDescriptor) error {
+func validateDerivationContextForSession(ctx DerivationContext, session SignSessionDescriptor) error {
 	normalized, err := corederivation.NormalizeContext(toCoreDerivationContext(ctx))
 	if err != nil {
 		return err

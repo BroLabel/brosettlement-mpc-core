@@ -32,7 +32,7 @@ func (noopTransport) RecvFrame(_ context.Context) (protocol.Frame, error) {
 
 func TestDKGSessionRequestValidateRequiresTransport(t *testing.T) {
 	req := DKGSessionRequest{
-		Session: SessionDescriptor{
+		Session: DKGSessionDescriptor{
 			SessionID: "session-1",
 			OrgID:     "org-1",
 			Parties:   []string{"p1", "p2", "p3"},
@@ -47,9 +47,15 @@ func TestDKGSessionRequestValidateRequiresTransport(t *testing.T) {
 	}
 }
 
+func TestDKGSessionRequestDoesNotExposeChainContext(t *testing.T) {
+	if _, ok := reflect.TypeOf(DKGSessionRequest{}.Session).FieldByName("Chain"); ok {
+		t.Fatal("DKG session request must not expose chain context")
+	}
+}
+
 func TestDKGSessionRequestValidateRequiresECDSADerivationMaterial(t *testing.T) {
 	req := DKGSessionRequest{
-		Session: SessionDescriptor{
+		Session: DKGSessionDescriptor{
 			SessionID: "dkg-1",
 			OrgID:     "org-1",
 			KeyID:     "key-1",
@@ -90,7 +96,7 @@ func TestDKGSessionRequestValidateRequiresECDSAKeyID(t *testing.T) {
 
 func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 	req := SignSessionRequest{
-		Session: SessionDescriptor{
+		Session: SignSessionDescriptor{
 			SessionID: "session-1",
 			OrgID:     "org-1",
 			KeyID:     "key-1",
@@ -124,7 +130,7 @@ func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalServic
 	}
 
 	err = svc.RunSignSession(context.Background(), SignSessionRequest{
-		Session: SessionDescriptor{
+		Session: SignSessionDescriptor{
 			SessionID: "sign-1",
 			OrgID:     "org",
 			KeyID:     "key-1",
@@ -152,7 +158,7 @@ func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalServic
 func TestRunSignSessionRejectsNilDerivationContextBeforeInternalService(t *testing.T) {
 	svc := NewBnbService(slog.Default())
 	err := svc.RunSignSession(context.Background(), SignSessionRequest{
-		Session: SessionDescriptor{
+		Session: SignSessionDescriptor{
 			SessionID: "sign-1",
 			OrgID:     "org-1",
 			KeyID:     "key-1",
@@ -182,7 +188,7 @@ func TestRunSignSessionRejectsInvalidDerivationContextBeforeInternalService(t *t
 		FullPath:    "m/44'/60'/0'/0/015",
 	}
 	err := svc.RunSignSession(context.Background(), SignSessionRequest{
-		Session: SessionDescriptor{
+		Session: SignSessionDescriptor{
 			SessionID: "sign-1",
 			OrgID:     "org-1",
 			KeyID:     "key-1",
@@ -203,7 +209,7 @@ func TestRunSignSessionRejectsInvalidDerivationContextBeforeInternalService(t *t
 
 func validDKGRequestWithMaterial() DKGSessionRequest {
 	return DKGSessionRequest{
-		Session: SessionDescriptor{
+		Session: DKGSessionDescriptor{
 			SessionID: "dkg-1",
 			OrgID:     "org-1",
 			KeyID:     "key-1",

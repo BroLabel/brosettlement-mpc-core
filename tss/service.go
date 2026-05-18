@@ -34,7 +34,19 @@ type serviceOptions struct {
 	preParamsSource    PreParamsSource
 }
 
-type SessionDescriptor struct {
+type SessionDescriptor = DKGSessionDescriptor
+
+type DKGSessionDescriptor struct {
+	SessionID string
+	OrgID     string
+	KeyID     string
+	Parties   []string
+	Threshold uint32
+	Algorithm string
+	Curve     string
+}
+
+type SignSessionDescriptor struct {
 	SessionID string
 	OrgID     string
 	KeyID     string
@@ -46,14 +58,14 @@ type SessionDescriptor struct {
 }
 
 type DKGSessionRequest struct {
-	Session            SessionDescriptor
+	Session            DKGSessionDescriptor
 	LocalPartyID       string
 	DerivationMaterial *DKGDerivationMaterial
 	Transport          Transport
 }
 
 type SignSessionRequest struct {
-	Session           SessionDescriptor
+	Session           SignSessionDescriptor
 	LocalPartyID      string
 	Digest            []byte
 	DerivationContext *DerivationContext
@@ -187,7 +199,6 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 		Threshold:          req.Session.Threshold,
 		Curve:              req.Session.Curve,
 		Algorithm:          req.Session.Algorithm,
-		Chain:              req.Session.Chain,
 		DerivationMaterial: material,
 		Transport:          req.Transport,
 		EmptyKeyErr:        ErrKeyIDRequired,

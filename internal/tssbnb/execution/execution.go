@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/BroLabel/brosettlement-mpc-core/internal/idgen"
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
@@ -26,11 +27,12 @@ import (
 )
 
 var (
-	ErrUnknownSenderParty = bnbutils.ErrUnknownSenderParty
-	ErrDuplicateFrame     = bnbutils.ErrDuplicateFrame
-	ErrFrameTooLarge      = bnbutils.ErrFrameTooLarge
-	ErrQueueFull          = bnbutils.ErrQueueFull
-	ErrStalledProtocol    = bnbutils.ErrStalledProtocol
+	ErrUnknownSenderParty        = bnbutils.ErrUnknownSenderParty
+	ErrDuplicateFrame            = bnbutils.ErrDuplicateFrame
+	ErrFrameTooLarge             = bnbutils.ErrFrameTooLarge
+	ErrQueueFull                 = bnbutils.ErrQueueFull
+	ErrStalledProtocol           = bnbutils.ErrStalledProtocol
+	ErrDerivationContextMismatch = corederivation.ErrDerivationContextMismatch
 )
 
 // tss-lib may publish the sign terminal result before this runner observes the
@@ -44,18 +46,19 @@ type Transport interface {
 }
 
 type Params struct {
-	SessionID     string
-	LocalPartyID  string
-	CorrelationID string
-	Stage         string
-	Algorithm     string
-	Party         tsslib.Party
-	PartyIDs      map[string]*tsslib.PartyID
-	OutCh         <-chan tsslib.Message
-	Logger        *slog.Logger
-	Debug         bool
-	Config        tssbnbutils.RunnerConfig
-	Metrics       bnbutils.Metrics
+	SessionID             string
+	LocalPartyID          string
+	CorrelationID         string
+	Stage                 string
+	Algorithm             string
+	DerivationContextHash string
+	Party                 tsslib.Party
+	PartyIDs              map[string]*tsslib.PartyID
+	OutCh                 <-chan tsslib.Message
+	Logger                *slog.Logger
+	Debug                 bool
+	Config                tssbnbutils.RunnerConfig
+	Metrics               bnbutils.Metrics
 
 	DKGECDSAEndCh  <-chan ecdsakeygen.LocalPartySaveData
 	SignECDSAEndCh <-chan *common.SignatureData
@@ -69,18 +72,19 @@ type StatsSnapshot struct {
 }
 
 type ProtocolExecution struct {
-	sessionID     string
-	localPartyID  string
-	correlationID string
-	stage         string
-	algorithm     string
-	party         tsslib.Party
-	partyIDs      map[string]*tsslib.PartyID
-	outCh         <-chan tsslib.Message
-	logger        *slog.Logger
-	debug         bool
-	cfg           tssbnbutils.RunnerConfig
-	metrics       bnbutils.Metrics
+	sessionID             string
+	localPartyID          string
+	correlationID         string
+	stage                 string
+	algorithm             string
+	derivationContextHash string
+	party                 tsslib.Party
+	partyIDs              map[string]*tsslib.PartyID
+	outCh                 <-chan tsslib.Message
+	logger                *slog.Logger
+	debug                 bool
+	cfg                   tssbnbutils.RunnerConfig
+	metrics               bnbutils.Metrics
 
 	dkgECDSAEndCh  <-chan ecdsakeygen.LocalPartySaveData
 	signECDSAEndCh <-chan *common.SignatureData
@@ -104,22 +108,23 @@ type ProtocolExecution struct {
 
 func New(p Params) *ProtocolExecution {
 	return &ProtocolExecution{
-		sessionID:      p.SessionID,
-		localPartyID:   p.LocalPartyID,
-		correlationID:  p.CorrelationID,
-		stage:          p.Stage,
-		algorithm:      p.Algorithm,
-		party:          p.Party,
-		partyIDs:       p.PartyIDs,
-		outCh:          p.OutCh,
-		logger:         p.Logger,
-		debug:          p.Debug,
-		cfg:            p.Config,
-		metrics:        p.Metrics,
-		dkgECDSAEndCh:  p.DKGECDSAEndCh,
-		signECDSAEndCh: p.SignECDSAEndCh,
-		doneCh:         p.DoneCh,
-		stats:          &protocolStats{},
+		sessionID:             p.SessionID,
+		localPartyID:          p.LocalPartyID,
+		correlationID:         p.CorrelationID,
+		stage:                 p.Stage,
+		algorithm:             p.Algorithm,
+		derivationContextHash: p.DerivationContextHash,
+		party:                 p.Party,
+		partyIDs:              p.PartyIDs,
+		outCh:                 p.OutCh,
+		logger:                p.Logger,
+		debug:                 p.Debug,
+		cfg:                   p.Config,
+		metrics:               p.Metrics,
+		dkgECDSAEndCh:         p.DKGECDSAEndCh,
+		signECDSAEndCh:        p.SignECDSAEndCh,
+		doneCh:                p.DoneCh,
+		stats:                 &protocolStats{},
 		deduper: newTTLFrameDeduper(deduperConfig{
 			TTL:           p.Config.DedupTTL,
 			MaxEntries:    p.Config.DedupMaxEntries,
@@ -495,11 +500,24 @@ func (e *ProtocolExecution) validateInbound(frame protocol.Frame) error {
 	if frame.SessionID != e.sessionID {
 		return io.EOF
 	}
+	if err := e.validateDerivationContextHash(frame); err != nil {
+		return err
+	}
 	if ok, err := e.shouldProcessInbound(frame); !ok {
 		if errors.Is(err, ErrDuplicateFrame) {
 			return nil
 		}
 		return err
+	}
+	return nil
+}
+
+func (e *ProtocolExecution) validateDerivationContextHash(frame protocol.Frame) error {
+	if e.stage != "sign" {
+		return nil
+	}
+	if e.derivationContextHash == "" || frame.DerivationContextHash != e.derivationContextHash {
+		return fmt.Errorf("%w: expected=%s got=%s", ErrDerivationContextMismatch, e.derivationContextHash, frame.DerivationContextHash)
 	}
 	return nil
 }
@@ -559,6 +577,34 @@ func (e *ProtocolExecution) handleIncoming(frame protocol.Frame) error {
 	return e.applyInbound(parsedMsg, frame.FromParty, frame.SessionID)
 }
 
+type outboundFrameInput struct {
+	messageType string
+	roundHint   uint32
+	broadcast   bool
+	fromParty   string
+	payload     []byte
+}
+
+func (e *ProtocolExecution) newOutboundBaseFrame(in outboundFrameInput) protocol.Frame {
+	return protocol.Frame{
+		SessionID:             e.sessionID,
+		Stage:                 e.stage,
+		MessageID:             idgen.New("msg"),
+		Seq:                   atomic.AddUint64(&e.seq, 1),
+		Round:                 0,
+		RoundHint:             in.roundHint,
+		Broadcast:             in.broadcast,
+		Protocol:              e.algorithm,
+		MessageType:           in.messageType,
+		FromParty:             in.fromParty,
+		Payload:               in.payload,
+		PayloadHash:           shortHash(in.payload),
+		DerivationContextHash: e.derivationContextHash,
+		CorrelationID:         e.correlationID,
+		SentAt:                time.Now(),
+	}
+}
+
 func (e *ProtocolExecution) forwardOutgoing(ctx context.Context, transport Transport, msg tsslib.Message) error {
 	msgType := msg.Type()
 	roundHint := inferRoundHint(msgType)
@@ -571,22 +617,13 @@ func (e *ProtocolExecution) forwardOutgoing(ctx context.Context, transport Trans
 		return fmt.Errorf("%w: %d > %d", ErrFrameTooLarge, len(payload), e.cfg.MaxFrameBytes)
 	}
 
-	base := protocol.Frame{
-		SessionID:     e.sessionID,
-		Stage:         e.stage,
-		MessageID:     idgen.New("msg"),
-		Seq:           atomic.AddUint64(&e.seq, 1),
-		Round:         0,
-		RoundHint:     roundHint,
-		Broadcast:     routing.IsBroadcast,
-		Protocol:      e.algorithm,
-		MessageType:   msgType,
-		FromParty:     routing.From.Id,
-		Payload:       payload,
-		PayloadHash:   shortHash(payload),
-		CorrelationID: e.correlationID,
-		SentAt:        time.Now(),
-	}
+	base := e.newOutboundBaseFrame(outboundFrameInput{
+		messageType: msgType,
+		roundHint:   roundHint,
+		broadcast:   routing.IsBroadcast,
+		fromParty:   routing.From.Id,
+		payload:     payload,
+	})
 
 	if routing.IsBroadcast || len(routing.To) == 0 {
 		if err := transport.SendFrame(ctx, base); err != nil {

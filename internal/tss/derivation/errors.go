@@ -1,0 +1,17 @@
+package derivation
+
+import (
+	"errors"
+)
+
+var (
+	ErrDerivationContextRequired   = errors.New("derivation context required")
+	ErrInvalidDerivationContext    = errors.New("invalid derivation context")
+	ErrUnsupportedDerivationScheme = errors.New("unsupported derivation scheme")
+	ErrDerivationPathInvalid       = errors.New("derivation path invalid")
+	ErrDerivationContextMismatch   = errors.New("derivation context mismatch")
+	ErrChainCodeMissing            = errors.New("chain code missing")
+	ErrChainCodeInvalid            = errors.New("chain code invalid")
+	ErrDerivedSigningUnsupported   = errors.New("derived signing unsupported")
+	ErrUnsupportedAlgorithmCurve   = errors.New("unsupported algorithm curve")
+)

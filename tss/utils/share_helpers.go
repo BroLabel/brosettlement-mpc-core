@@ -18,14 +18,17 @@ func NormalizeKeyID(raw string, emptyErr error) (string, error) {
 }
 
 // DKGShareMeta builds metadata for platform share persisted after DKG.
-func DKGShareMeta(keyID, orgID, algorithm, curve string) coreshares.ShareMeta {
+func DKGShareMeta(keyID, orgID, algorithm, curve string, chainCodePresent bool, publicKeyFormat, derivationScheme string) coreshares.ShareMeta {
 	return coreshares.ShareMeta{
-		KeyID:     keyID,
-		OrgID:     orgID,
-		Algorithm: NormalizeAlgorithm(algorithm),
-		Curve:     curve,
-		CreatedAt: time.Now().UTC(),
-		Version:   1,
-		Status:    coreshares.StatusActive,
+		KeyID:            keyID,
+		OrgID:            orgID,
+		Algorithm:        NormalizeAlgorithm(algorithm),
+		Curve:            curve,
+		CreatedAt:        time.Now().UTC(),
+		Version:          2,
+		Status:           coreshares.StatusActive,
+		ChainCodePresent: chainCodePresent,
+		PublicKeyFormat:  publicKeyFormat,
+		DerivationScheme: derivationScheme,
 	}
 }

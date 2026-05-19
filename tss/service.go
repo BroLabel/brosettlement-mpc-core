@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssrequests "github.com/BroLabel/brosettlement-mpc-core/internal/tss/requests"
 	tssservice "github.com/BroLabel/brosettlement-mpc-core/internal/tss/service"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -32,7 +34,19 @@ type serviceOptions struct {
 	preParamsSource    PreParamsSource
 }
 
-type SessionDescriptor struct {
+type SessionDescriptor = DKGSessionDescriptor
+
+type DKGSessionDescriptor struct {
+	SessionID string
+	OrgID     string
+	KeyID     string
+	Parties   []string
+	Threshold uint32
+	Algorithm string
+	Curve     string
+}
+
+type SignSessionDescriptor struct {
 	SessionID string
 	OrgID     string
 	KeyID     string
@@ -44,16 +58,18 @@ type SessionDescriptor struct {
 }
 
 type DKGSessionRequest struct {
-	Session      SessionDescriptor
-	LocalPartyID string
-	Transport    Transport
+	Session            DKGSessionDescriptor
+	LocalPartyID       string
+	DerivationMaterial *DKGDerivationMaterial
+	Transport          Transport
 }
 
 type SignSessionRequest struct {
-	Session      SessionDescriptor
-	LocalPartyID string
-	Digest       []byte
-	Transport    Transport
+	Session           SignSessionDescriptor
+	LocalPartyID      string
+	Digest            []byte
+	DerivationContext *DerivationContext
+	Transport         Transport
 }
 
 type runner = tssservice.Runner
@@ -164,36 +180,60 @@ func (s *Service) Snapshot() Snapshot {
 }
 
 func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error) {
+	if err := req.Validate(); err != nil {
+		return DKGOutput{}, err
+	}
+	var material tssservice.DKGDerivationMaterial
+	if req.DerivationMaterial != nil {
+		material = tssservice.DKGDerivationMaterial{
+			ChainCode:        req.DerivationMaterial.ChainCode,
+			DerivationScheme: req.DerivationMaterial.DerivationScheme,
+		}
+	}
 	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
-		SessionID:    req.Session.SessionID,
-		LocalPartyID: req.LocalPartyID,
-		OrgID:        req.Session.OrgID,
-		KeyID:        req.Session.KeyID,
-		Parties:      req.Session.Parties,
-		Threshold:    req.Session.Threshold,
-		Curve:        req.Session.Curve,
-		Algorithm:    req.Session.Algorithm,
-		Chain:        req.Session.Chain,
-		Transport:    req.Transport,
-		EmptyKeyErr:  ErrVaultWriteFailed,
-		MissingPub:   ErrMissingDKGPublicKey,
-		MissingAddr:  ErrMissingDKGAddress,
+		SessionID:          req.Session.SessionID,
+		LocalPartyID:       req.LocalPartyID,
+		OrgID:              req.Session.OrgID,
+		KeyID:              req.Session.KeyID,
+		Parties:            req.Session.Parties,
+		Threshold:          req.Session.Threshold,
+		Curve:              req.Session.Curve,
+		Algorithm:          req.Session.Algorithm,
+		DerivationMaterial: material,
+		Transport:          req.Transport,
+		EmptyKeyErr:        ErrKeyIDRequired,
+		MissingPub:         ErrMissingDKGPublicKey,
+		MissingAddr:        ErrMissingDKGAddress,
 	})
 }
 
 func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) error {
+	if err := req.Validate(); err != nil {
+		return err
+	}
+	normalized, err := NormalizeDerivationContext(*req.DerivationContext)
+	if err != nil {
+		return err
+	}
+	hash, err := DerivationContextHashV1(normalized)
+	if err != nil {
+		return err
+	}
 	return s.impl.RunSignSession(ctx, tssservice.SignInput{
-		SessionID:        req.Session.SessionID,
-		LocalPartyID:     req.LocalPartyID,
-		OrgID:            req.Session.OrgID,
-		KeyID:            req.Session.KeyID,
-		Parties:          req.Session.Parties,
-		Digest:           req.Digest,
-		Algorithm:        req.Session.Algorithm,
-		Chain:            req.Session.Chain,
-		Transport:        req.Transport,
-		EmptyKeyErr:      ErrShareNotFound,
-		MetadataMismatch: ErrMetadataMismatch,
+		SessionID:             req.Session.SessionID,
+		LocalPartyID:          req.LocalPartyID,
+		OrgID:                 req.Session.OrgID,
+		KeyID:                 req.Session.KeyID,
+		Parties:               req.Session.Parties,
+		Digest:                req.Digest,
+		Algorithm:             req.Session.Algorithm,
+		Curve:                 req.Session.Curve,
+		Chain:                 req.Session.Chain,
+		DerivationContext:     toCoreDerivationContext(normalized),
+		DerivationContextHash: hash,
+		Transport:             req.Transport,
+		EmptyKeyErr:           ErrShareNotFound,
+		MetadataMismatch:      ErrMetadataMismatch,
 	})
 }
 
@@ -201,35 +241,12 @@ func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error)
 	return s.impl.ExportECDSASignature(key)
 }
 
-func (s *Service) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
-	return s.impl.ExportECDSAKeyShare(key)
-}
-
-func (s *Service) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData) error {
-	s.impl.ImportECDSAKeyShare(key, data)
-	return nil
-}
-
-func (s *Service) DeleteECDSAKeyShare(key string) {
-	s.impl.DeleteECDSAKeyShare(key)
-}
-
 func (s *Service) ECDSAAddress(key string) (string, error) {
 	return s.impl.ECDSAAddress(key)
 }
 
-func isValidSessionDescriptor(session SessionDescriptor) bool {
-	return tssrequests.IsValidSessionDescriptor(tssrequests.SessionDescriptor{
-		SessionID: session.SessionID,
-		OrgID:     session.OrgID,
-		KeyID:     session.KeyID,
-		Parties:   session.Parties,
-		Threshold: session.Threshold,
-	})
-}
-
 func (r DKGSessionRequest) Validate() error {
-	return tssrequests.ValidateDKG(tssrequests.DKGRequest{
+	err := tssrequests.ValidateDKG(tssrequests.DKGRequest{
 		Session: tssrequests.SessionDescriptor{
 			SessionID: r.Session.SessionID,
 			OrgID:     r.Session.OrgID,
@@ -240,10 +257,35 @@ func (r DKGSessionRequest) Validate() error {
 		LocalPartyID: r.LocalPartyID,
 		HasTransport: r.Transport != nil,
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrTransportRequired)
+	if err != nil {
+		return err
+	}
+	if corederivation.IsECDSAAlgorithm(r.Session.Algorithm) && strings.TrimSpace(r.Session.KeyID) == "" {
+		return ErrKeyIDRequired
+	}
+	_, _, err = corederivation.ValidateDKGMaterial(r.Session.Algorithm, corederivation.DKGMaterial{
+		ChainCode:        derivationMaterialChainCode(r.DerivationMaterial),
+		DerivationScheme: derivationMaterialScheme(r.DerivationMaterial),
+	})
+	return err
+}
+
+func derivationMaterialChainCode(material *DKGDerivationMaterial) string {
+	if material == nil {
+		return ""
+	}
+	return material.ChainCode
+}
+
+func derivationMaterialScheme(material *DKGDerivationMaterial) string {
+	if material == nil {
+		return ""
+	}
+	return material.DerivationScheme
 }
 
 func (r SignSessionRequest) Validate() error {
-	return tssrequests.ValidateSign(tssrequests.SignRequest{
+	err := tssrequests.ValidateSign(tssrequests.SignRequest{
 		Session: tssrequests.SessionDescriptor{
 			SessionID: r.Session.SessionID,
 			OrgID:     r.Session.OrgID,
@@ -255,4 +297,11 @@ func (r SignSessionRequest) Validate() error {
 		Digest:       r.Digest,
 		HasTransport: r.Transport != nil,
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrKeyIDRequired, ErrDigestMissing, ErrTransportRequired)
+	if err != nil {
+		return err
+	}
+	if r.DerivationContext == nil {
+		return ErrDerivationContextRequired
+	}
+	return validateDerivationContextForSession(*r.DerivationContext, r.Session)
 }

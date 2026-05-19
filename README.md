@@ -45,6 +45,25 @@ func main() {
 }
 ```
 
+## Derived Signing
+
+Public SIGN requests require `tss.DerivationContext`.
+ECDSA secp256k1 signing signs the requested non-hardened BIP32 child key.
+Root or account-key signing is intentionally unsupported through the public SIGN API.
+
+ECDSA DKG creates account-level key material and requires upstream-supplied `tss.DKGDerivationMaterial`.
+The upstream orchestration layer must generate one 32-byte chain code per ECDSA DKG intent and pass the byte-identical value to every participant.
+Core validates and persists that chain code after successful DKG; SIGN requests never carry chain code.
+
+Core returns local DKG output.
+Key activation is an upstream orchestration responsibility and must compare matching outputs from the complete required participant set before activating a key.
+
+Core normalizes and hashes the signing derivation context with `tss.DerivationContextHashV1`.
+SIGN frames carry that hash so peers fail closed when they are using different profile/path commitments.
+
+Core does not store derivation profiles, prove profile or account-path ownership, compute chain-specific child addresses, or validate `ExpectedAddress`.
+EdDSA derivation values are reserved in the public contract, but derived EdDSA signing returns `tss.ErrDerivedSigningUnsupported` in this scope.
+
 ## Development
 
 Typical verification:

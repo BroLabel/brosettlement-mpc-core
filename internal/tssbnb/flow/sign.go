@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"reflect"
 	"strings"
 	"time"
 
@@ -21,15 +22,17 @@ import (
 )
 
 var (
-	ErrSignDigestRequired       = errors.New("sign digest is required")
-	ErrSignAlgorithmUnsupported = errors.New("sign supports only ecdsa")
+	ErrSignDigestRequired         = errors.New("sign digest is required")
+	ErrSignAlgorithmUnsupported   = errors.New("sign supports only ecdsa")
+	ErrKeyDerivationDeltaRequired = errors.New("key derivation delta is required")
 )
 
 type SignBuildInput struct {
-	Digest   []byte
-	Params   *tsslib.Parameters
-	KeyShare ecdsakeygen.LocalPartySaveData
-	OutCh    chan<- tsslib.Message
+	Digest             []byte
+	Params             *tsslib.Parameters
+	KeyShare           ecdsakeygen.LocalPartySaveData
+	KeyDerivationDelta *big.Int
+	OutCh              chan<- tsslib.Message
 }
 
 type SignBuildOutput struct {
@@ -38,12 +41,14 @@ type SignBuildOutput struct {
 }
 
 type SignRunJob struct {
-	SessionID    string
-	LocalPartyID string
-	KeyID        string
-	Parties      []string
-	Digest       []byte
-	Algorithm    string
+	SessionID             string
+	LocalPartyID          string
+	KeyID                 string
+	Parties               []string
+	Digest                []byte
+	Algorithm             string
+	KeyDerivationDelta    *big.Int
+	DerivationContextHash string
 }
 
 type SignRunMetrics = bnbutils.Metrics
@@ -59,20 +64,21 @@ type SignRunInput struct {
 	OnSignature func(*common.SignatureData)
 }
 
-func BuildSign(in SignBuildInput) SignBuildOutput {
+func BuildSign(in SignBuildInput) (SignBuildOutput, error) {
+	if in.KeyDerivationDelta == nil {
+		return SignBuildOutput{}, ErrKeyDerivationDeltaRequired
+	}
 	rawEndCh := make(chan *common.SignatureData, 1)
 
 	tssEndCh := make(chan common.SignatureData, 1)
 	msg := new(big.Int).SetBytes(in.Digest)
-	party := ecdsasigning.NewLocalParty(msg, in.Params, in.KeyShare, in.OutCh, tssEndCh)
+	party := ecdsasigning.NewLocalPartyWithKDD(msg, in.Params, in.KeyShare, in.KeyDerivationDelta, in.OutCh, tssEndCh)
 	go func() {
 		defer close(rawEndCh)
 
-		//nolint:govet // unavoidable boundary with tss-lib v1.5.0
-		sig := <-tssEndCh
-		rawEndCh <- cloneSignatureData(&sig)
+		rawEndCh <- recvSignatureData(tssEndCh)
 	}()
-	return SignBuildOutput{Party: party, End: rawEndCh}
+	return SignBuildOutput{Party: party, End: rawEndCh}, nil
 }
 
 func RunSign(ctx context.Context, in SignRunInput) error {
@@ -155,38 +161,62 @@ func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, l
 	}
 
 	outCh := make(chan tsslib.Message, len(job.Parties)*8)
-	built := BuildSign(SignBuildInput{
-		Digest:   job.Digest,
-		Params:   params,
-		KeyShare: keyShare,
-		OutCh:    outCh,
+	built, err := BuildSign(SignBuildInput{
+		Digest:             job.Digest,
+		Params:             params,
+		KeyShare:           keyShare,
+		KeyDerivationDelta: job.KeyDerivationDelta,
+		OutCh:              outCh,
 	})
+	if err != nil {
+		return nil, err
+	}
 	return execution.New(execution.Params{
-		SessionID:      job.SessionID,
-		LocalPartyID:   job.LocalPartyID,
-		CorrelationID:  correlationID,
-		Stage:          "sign",
-		Algorithm:      "ecdsa",
-		Party:          built.Party,
-		PartyIDs:       partyIDs,
-		OutCh:          outCh,
-		Logger:         logger,
-		Debug:          debug,
-		Config:         cfg,
-		Metrics:        metrics,
-		SignECDSAEndCh: built.End,
+		SessionID:             job.SessionID,
+		LocalPartyID:          job.LocalPartyID,
+		CorrelationID:         correlationID,
+		Stage:                 "sign",
+		Algorithm:             "ecdsa",
+		DerivationContextHash: job.DerivationContextHash,
+		Party:                 built.Party,
+		PartyIDs:              partyIDs,
+		OutCh:                 outCh,
+		Logger:                logger,
+		Debug:                 debug,
+		Config:                cfg,
+		Metrics:               metrics,
+		SignECDSAEndCh:        built.End,
 	}), nil
 }
 
-func cloneSignatureData(in *common.SignatureData) *common.SignatureData {
-	if in == nil {
+func recvSignatureData(ch <-chan common.SignatureData) *common.SignatureData {
+	v, ok := reflect.ValueOf(ch).Recv()
+	if !ok {
 		return nil
 	}
+	return cloneSignatureFields(
+		signatureDataBytes(v, "Signature"),
+		signatureDataBytes(v, "SignatureRecovery"),
+		signatureDataBytes(v, "R"),
+		signatureDataBytes(v, "S"),
+		signatureDataBytes(v, "M"),
+	)
+}
+
+func signatureDataBytes(v reflect.Value, field string) []byte {
+	f := v.FieldByName(field)
+	if !f.IsValid() || f.Kind() != reflect.Slice || f.Type().Elem().Kind() != reflect.Uint8 {
+		return nil
+	}
+	return f.Bytes()
+}
+
+func cloneSignatureFields(signature, recovery, r, s, m []byte) *common.SignatureData {
 	return &common.SignatureData{
-		Signature:         append([]byte(nil), in.GetSignature()...),
-		SignatureRecovery: append([]byte(nil), in.GetSignatureRecovery()...),
-		R:                 append([]byte(nil), in.GetR()...),
-		S:                 append([]byte(nil), in.GetS()...),
-		M:                 append([]byte(nil), in.GetM()...),
+		Signature:         append([]byte(nil), signature...),
+		SignatureRecovery: append([]byte(nil), recovery...),
+		R:                 append([]byte(nil), r...),
+		S:                 append([]byte(nil), s...),
+		M:                 append([]byte(nil), m...),
 	}
 }

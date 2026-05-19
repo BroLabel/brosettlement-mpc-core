@@ -4,7 +4,6 @@ import (
 	"context"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 
 const (
@@ -27,13 +26,15 @@ var (
 type StoredShare = coreshares.StoredShare
 type ShareMeta = coreshares.ShareMeta
 type ShareStore = coreshares.Store
+type ECDSAKeyMaterial = coreshares.ECDSAKeyMaterial
+type KeyMaterialMeta = coreshares.KeyMaterialMeta
 
-func MarshalShare(share ecdsakeygen.LocalPartySaveData) ([]byte, error) {
-	return coreshares.MarshalShare(share)
+func MarshalKeyMaterial(material ECDSAKeyMaterial) ([]byte, error) {
+	return coreshares.MarshalKeyMaterial(material)
 }
 
-func UnmarshalShare(blob []byte) (ecdsakeygen.LocalPartySaveData, error) {
-	return coreshares.UnmarshalShare(blob)
+func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
+	return coreshares.UnmarshalKeyMaterial(blob)
 }
 
 type ShareCipher interface {

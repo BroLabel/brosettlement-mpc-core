@@ -8,7 +8,6 @@ import (
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	"log/slog"
 )
 
@@ -64,14 +63,22 @@ func (s *Service) Snapshot() Snapshot {
 
 func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
 	job := buildDKGJob(in)
-	keyID := normalizeDKGKeyID(in.SessionID, in.KeyID, job.Algorithm)
+	keyID, err := resolveDKGOutputKeyID(in, job.Algorithm)
+	if err != nil {
+		return DKGOutput{}, err
+	}
 
 	tsslogging.LogSessionStart(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID)
 	started := time.Now()
 	logEnd := func(err error) {
 		tsslogging.LogSessionEnd(s.logger, "dkg", in.SessionID, in.OrgID, keyID, in.LocalPartyID, started, err)
 	}
-	err := AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
+	material, err := normalizeDKGMaterial(in)
+	if err != nil {
+		logEnd(err)
+		return DKGOutput{}, err
+	}
+	err = AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
 	if err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
@@ -85,12 +92,13 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		return DKGOutput{KeyID: keyID}, nil
 	}
 
-	output, share, err := buildECDSADKGOutput(s.runner, in, keyID)
+	output, share, err := buildECDSADKGOutput(s.runner, in, keyID, material)
 	if err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-	if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, job, keyID, share); err != nil {
+	importNoStoreECDSAKeyMaterial(s.runner, s.shareStore, keyID, share, material)
+	if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, job, keyID, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
 	}
@@ -100,21 +108,22 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 
 func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 	job := tssbnbrunner.SignJob{
-		SessionID:    in.SessionID,
-		LocalPartyID: in.LocalPartyID,
-		OrgID:        in.OrgID,
-		KeyID:        in.KeyID,
-		Parties:      in.Parties,
-		Digest:       append([]byte(nil), in.Digest...),
-		Algorithm:    in.Algorithm,
-		Chain:        in.Chain,
+		SessionID:             in.SessionID,
+		LocalPartyID:          in.LocalPartyID,
+		OrgID:                 in.OrgID,
+		KeyID:                 in.KeyID,
+		Parties:               in.Parties,
+		Digest:                append([]byte(nil), in.Digest...),
+		Algorithm:             in.Algorithm,
+		Chain:                 in.Chain,
+		DerivationContextHash: in.DerivationContextHash,
 	}
 
 	tsslogging.LogSessionStart(s.logger, "sign", in.SessionID, in.OrgID, in.KeyID, in.LocalPartyID)
 	started := time.Now()
-	cleanup, err := prepareShareForSign(ctx, s.shareStore, s.runner, job, in.EmptyKeyErr, in.MetadataMismatch)
+	var err error
+	job, err = prepareDerivedECDSASignJob(ctx, s.shareStore, s.runner, job, in)
 	if err == nil {
-		defer cleanup()
 		err = s.runner.RunSign(ctx, job, in.Transport)
 	}
 	if err == nil {
@@ -126,18 +135,6 @@ func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 
 func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error) {
 	return s.runner.ExportECDSASignature(key)
-}
-
-func (s *Service) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
-	return s.runner.ExportECDSAKeyShare(key)
-}
-
-func (s *Service) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData) {
-	s.runner.ImportECDSAKeyShare(key, data)
-}
-
-func (s *Service) DeleteECDSAKeyShare(key string) {
-	s.runner.DeleteECDSAKeyShare(key)
 }
 
 func (s *Service) ECDSAAddress(key string) (string, error) {

@@ -1,6 +1,8 @@
 package bnb
 
 import (
+	"math/big"
+
 	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
@@ -17,19 +19,21 @@ type DKGJob struct {
 	Threshold    uint32
 	Curve        string
 	Algorithm    string
-	Chain        string
 	// ECDSAPreParams is optional and speeds up ECDSA DKG when precomputed out-of-band.
 	ECDSAPreParams *ecdsakeygen.LocalPreParams
 }
 
 // SignJob describes a single signing execution request.
 type SignJob struct {
-	SessionID    string
-	LocalPartyID string
-	OrgID        string
-	KeyID        string
-	Parties      []string
-	Digest       []byte
-	Algorithm    string
-	Chain        string
+	SessionID             string
+	LocalPartyID          string
+	OrgID                 string
+	KeyID                 string
+	Parties               []string
+	Digest                []byte
+	Algorithm             string
+	Chain                 string
+	KeyShare              ecdsakeygen.LocalPartySaveData
+	KeyDerivationDelta    *big.Int
+	DerivationContextHash string
 }

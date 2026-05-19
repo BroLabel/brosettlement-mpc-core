@@ -28,6 +28,7 @@ type stubRunner struct {
 	lastDKGJob          tssbnbrunner.DKGJob
 	lastSignJob         tssbnbrunner.SignJob
 	shareByKey          map[string]ecdsakeygen.LocalPartySaveData
+	materialByKey       map[string]coreshares.ECDSAKeyMaterial
 	exportedKeys        []string
 	deletedKeys         []string
 	events              []string
@@ -35,7 +36,7 @@ type stubRunner struct {
 	signatureExported   bool
 }
 
-func (r *stubRunner) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
+func (r *stubRunner) ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
 	r.events = append(r.events, "export:"+key)
 	r.exportedKeys = append(r.exportedKeys, key)
 	share, ok := r.shareByKey[key]
@@ -45,7 +46,15 @@ func (r *stubRunner) ExportECDSAKeyShare(key string) (ecdsakeygen.LocalPartySave
 	return share, nil
 }
 
-func (r *stubRunner) DeleteECDSAKeyShare(key string) {
+func (r *stubRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
+	r.events = append(r.events, "export-material:"+key)
+	if material, ok := r.materialByKey[key]; ok {
+		return material, nil
+	}
+	return coreshares.ECDSAKeyMaterial{}, errShareMissing
+}
+
+func (r *stubRunner) DeleteTemporaryECDSADKGShare(key string) {
 	r.events = append(r.events, "cleanup:"+key)
 	r.deletedKeys = append(r.deletedKeys, key)
 	delete(r.shareByKey, key)
@@ -73,11 +82,15 @@ func (r *stubRunner) ExportECDSASignature(string) (common.SignatureData, error) 
 	return common.SignatureData{}, nil
 }
 
-func (r *stubRunner) ImportECDSAKeyShare(key string, data ecdsakeygen.LocalPartySaveData) {
+func (r *stubRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
+	if r.materialByKey == nil {
+		r.materialByKey = map[string]coreshares.ECDSAKeyMaterial{}
+	}
 	if r.shareByKey == nil {
 		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
 	}
-	r.shareByKey[key] = data
+	r.materialByKey[key] = material
+	r.shareByKey[key] = material.Share
 }
 
 func (r *stubRunner) ECDSAAddress(string) (string, error) {
@@ -88,15 +101,6 @@ func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newECDSATestShare(t *testing.T) ecdsakeygen.LocalPartySaveData {
-	t.Helper()
-	pub := crypto.ScalarBaseMult(elliptic.P256(), big.NewInt(1))
-	if pub == nil {
-		t.Fatal("expected test public key point")
-	}
-	return ecdsakeygen.LocalPartySaveData{ECDSAPub: pub}
-}
-
 func newECDSATestShareWithCurve(t *testing.T, curve elliptic.Curve) ecdsakeygen.LocalPartySaveData {
 	t.Helper()
 	pub := crypto.ScalarBaseMult(curve, big.NewInt(1))
@@ -104,16 +108,6 @@ func newECDSATestShareWithCurve(t *testing.T, curve elliptic.Curve) ecdsakeygen.
 		t.Fatal("expected test public key point")
 	}
 	return ecdsakeygen.LocalPartySaveData{ECDSAPub: pub}
-}
-
-func newECDSAStubRunner(t *testing.T, sessionID string) *stubRunner {
-	t.Helper()
-	share := newECDSATestShare(t)
-	return &stubRunner{
-		shareByKey: map[string]ecdsakeygen.LocalPartySaveData{
-			sessionID: share,
-		},
-	}
 }
 
 func newECDSAStubRunnerWithoutPub(t *testing.T, sessionID string) *stubRunner {
@@ -190,4 +184,20 @@ func (s *failingShareStore) SaveShare(context.Context, string, []byte, coreshare
 
 func (s *failingShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
 	return nil, coreshares.ErrShareNotFound
+}
+
+type staticShareStore struct {
+	stored *coreshares.StoredShare
+	err    error
+}
+
+func (s staticShareStore) SaveShare(context.Context, string, []byte, coreshares.ShareMeta) error {
+	return nil
+}
+
+func (s staticShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.stored, nil
 }

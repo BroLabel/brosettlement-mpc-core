@@ -8,11 +8,14 @@ const (
 )
 
 type ShareMeta struct {
-	KeyID     string
-	OrgID     string
-	Algorithm string
-	Curve     string
-	CreatedAt time.Time
-	Version   uint32
-	Status    string
+	KeyID            string
+	OrgID            string
+	Algorithm        string
+	Curve            string
+	CreatedAt        time.Time
+	Version          uint32
+	Status           string
+	ChainCodePresent bool
+	PublicKeyFormat  string
+	DerivationScheme string
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,6 +59,86 @@ func TestShouldProcessInboundDedup(t *testing.T) {
 	ok, reason = exec.shouldProcessInbound(frame)
 	if ok || !errors.Is(reason, ErrDuplicateFrame) {
 		t.Fatalf("duplicate should be dropped, got ok=%v reason=%v", ok, reason)
+	}
+}
+
+func TestValidateInboundSignFrameRequiresMatchingDerivationContextHash(t *testing.T) {
+	exec := New(Params{
+		SessionID:             "s1",
+		Stage:                 "sign",
+		DerivationContextHash: strings.Repeat("a", 64),
+		Config:                tssbnbutils.DefaultRunnerConfig(),
+		Metrics:               testMetrics{},
+	})
+
+	for _, tc := range []struct {
+		name string
+		hash string
+	}{
+		{name: "missing"},
+		{name: "mismatch", hash: strings.Repeat("b", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := exec.handleIncoming(protocol.Frame{
+				SessionID:             "s1",
+				Stage:                 "sign",
+				FromParty:             "unknown-party",
+				Seq:                   10,
+				Payload:               []byte("not a tss message"),
+				PayloadHash:           shortHash([]byte("not a tss message")),
+				DerivationContextHash: tc.hash,
+			})
+			if !errors.Is(err, ErrDerivationContextMismatch) {
+				t.Fatalf("expected ErrDerivationContextMismatch, got %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateInboundDKGFrameDoesNotRequireDerivationContextHash(t *testing.T) {
+	exec := New(Params{
+		SessionID: "s1",
+		Stage:     "dkg",
+		Config:    tssbnbutils.DefaultRunnerConfig(),
+		Metrics:   testMetrics{},
+	})
+
+	err := exec.validateInbound(protocol.Frame{
+		SessionID:   "s1",
+		Stage:       "dkg",
+		FromParty:   "p1",
+		Seq:         1,
+		Payload:     []byte("abc"),
+		PayloadHash: shortHash([]byte("abc")),
+	})
+	if err != nil {
+		t.Fatalf("DKG frame without derivation context hash should validate, got %v", err)
+	}
+}
+
+func TestNewOutboundBaseFrameStampsDerivationContextHash(t *testing.T) {
+	exec := New(Params{
+		SessionID:             "s1",
+		Stage:                 "sign",
+		Algorithm:             "ecdsa",
+		CorrelationID:         "corr-1",
+		DerivationContextHash: strings.Repeat("a", 64),
+		Config:                tssbnbutils.DefaultRunnerConfig(),
+		Metrics:               testMetrics{},
+	})
+
+	frame := exec.newOutboundBaseFrame(outboundFrameInput{
+		messageType: "SignRound1Message",
+		roundHint:   1,
+		broadcast:   true,
+		fromParty:   "p1",
+		payload:     []byte("payload"),
+	})
+	if frame.DerivationContextHash != strings.Repeat("a", 64) {
+		t.Fatalf("DerivationContextHash = %q", frame.DerivationContextHash)
+	}
+	if frame.SessionID != "s1" || frame.Stage != "sign" || frame.Protocol != "ecdsa" {
+		t.Fatalf("unexpected base frame: %+v", frame)
 	}
 }
 

@@ -142,6 +142,19 @@ func TestCodecV2RejectsUnsupportedVersion(t *testing.T) {
 	}
 }
 
+func TestCopyAndClearBytesClearsDecoderOwnedChainCodeAfterCopy(t *testing.T) {
+	decoderOwnedChainCode := bytes.Repeat([]byte{0x11}, 32)
+
+	copy := copyAndClearBytes(decoderOwnedChainCode)
+
+	if !bytes.Equal(copy, bytes.Repeat([]byte{0x11}, 32)) {
+		t.Fatal("copyAndClearBytes() changed the copied chain code")
+	}
+	if !bytes.Equal(decoderOwnedChainCode, make([]byte, len(decoderOwnedChainCode))) {
+		t.Fatal("copyAndClearBytes() did not clear the decoder-owned chain code")
+	}
+}
+
 func codecV2BlobAtSize(t *testing.T, target int) (ECDSAKeyMaterial, []byte) {
 	t.Helper()
 	for low, high := 0, target; low <= high; {

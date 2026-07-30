@@ -65,6 +65,9 @@ func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 
 	decoder := gob.NewDecoder(bytes.NewReader(blob))
 	var env shareEnvelope
+	defer func() {
+		clearBytes(env.Meta.ChainCode)
+	}()
 	if err := decoder.Decode(&env); err != nil {
 		return ECDSAKeyMaterial{}, fmt.Errorf("%w: decode: %v", ErrInvalidSharePayload, err)
 	}
@@ -76,8 +79,20 @@ func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 	}
 	return ECDSAKeyMaterial{
 		Share:            env.Share,
-		ChainCode:        append([]byte(nil), env.Meta.ChainCode...),
+		ChainCode:        copyAndClearBytes(env.Meta.ChainCode),
 		PublicKeyFormat:  env.Meta.PublicKeyFormat,
 		DerivationScheme: env.Meta.DerivationScheme,
 	}, nil
+}
+
+func copyAndClearBytes(source []byte) []byte {
+	copy := append([]byte(nil), source...)
+	clearBytes(source)
+	return copy
+}
+
+func clearBytes(buffer []byte) {
+	for index := range buffer {
+		buffer[index] = 0
+	}
 }

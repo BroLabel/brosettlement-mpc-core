@@ -28,6 +28,7 @@ type ShareMeta = coreshares.ShareMeta
 type ShareStore = coreshares.Store
 type ECDSAKeyMaterial = coreshares.ECDSAKeyMaterial
 type KeyMaterialMeta = coreshares.KeyMaterialMeta
+type ECDSAKeyMaterialEvidence = coreshares.ECDSAKeyMaterialEvidence
 
 func MarshalKeyMaterial(material ECDSAKeyMaterial) ([]byte, error) {
 	return coreshares.MarshalKeyMaterial(material)
@@ -35,6 +36,10 @@ func MarshalKeyMaterial(material ECDSAKeyMaterial) ([]byte, error) {
 
 func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 	return coreshares.UnmarshalKeyMaterial(blob)
+}
+
+func InspectEncodedECDSAKeyMaterial(blob []byte) (ECDSAKeyMaterialEvidence, error) {
+	return coreshares.InspectEncodedECDSAKeyMaterial(blob)
 }
 
 type ShareCipher interface {

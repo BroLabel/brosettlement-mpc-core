@@ -25,10 +25,8 @@ type Runner interface {
 	ECDSAAddress(key string) (string, error)
 }
 
-type ShareStore interface {
-	SaveShare(ctx context.Context, keyID string, blob []byte, meta coreshares.ShareMeta) error
-	LoadShare(ctx context.Context, keyID string) (*coreshares.StoredShare, error)
-}
+type ShareReader = coreshares.ShareReader
+type ShareWriter = coreshares.ShareWriter
 
 type LifecyclePool interface {
 	PreParamsPool
@@ -48,19 +46,20 @@ type DKGDerivationMaterial struct {
 }
 
 type DKGInput struct {
-	SessionID          string
-	LocalPartyID       string
-	OrgID              string
-	KeyID              string
-	Parties            []string
-	Threshold          uint32
-	Curve              string
-	Algorithm          string
-	DerivationMaterial DKGDerivationMaterial
-	Transport          coretransport.FrameTransport
-	EmptyKeyErr        error
-	MissingPub         error
-	MissingAddr        error
+	SessionID                   string
+	LocalPartyID                string
+	OrgID                       string
+	KeyID                       string
+	OpaqueDescriptorFingerprint []byte
+	Parties                     []string
+	Threshold                   uint32
+	Curve                       string
+	Algorithm                   string
+	DerivationMaterial          DKGDerivationMaterial
+	Transport                   coretransport.FrameTransport
+	EmptyKeyErr                 error
+	MissingPub                  error
+	MissingAddr                 error
 }
 
 type DKGOutput struct {

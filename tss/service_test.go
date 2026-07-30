@@ -115,7 +115,7 @@ func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 
 func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalService(t *testing.T) {
 	runner := newFacadeDerivedRunner(t, "key-1")
-	svc := newService(runner, slog.Default(), nil, nil, nil)
+	svc := newService(runner, slog.Default(), nil, nil, nil, nil)
 	ctx := validFacadeDerivationContext()
 	ctx.Algorithm = " ECDSA "
 	ctx.Curve = " SECP256K1 "
@@ -346,17 +346,15 @@ func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {
 	}
 }
 
-type stubShareStore struct{}
+type stubShareReader struct{}
 
-func (stubShareStore) SaveShare(_ context.Context, _ string, _ []byte, _ coreshares.ShareMeta) error {
-	return nil
-}
-
-func (stubShareStore) LoadShare(_ context.Context, _ string) (*coreshares.StoredShare, error) {
+func (stubShareReader) LoadShare(_ context.Context, _ string) (*coreshares.StoredShare, error) {
 	return nil, ErrShareNotFound
 }
 
-func (stubShareStore) DisableShare(_ context.Context, _ string) error {
+type stubShareWriter struct{}
+
+func (stubShareWriter) SaveShare(_ context.Context, _ SaveShareInput) error {
 	return nil
 }
 
@@ -371,7 +369,7 @@ func (s *sourceStub) Acquire(_ context.Context) (*ecdsakeygen.LocalPreParams, er
 	return s.value, s.err
 }
 
-func TestNewBnbServiceWithOptionsConfigShareStoreMetrics(t *testing.T) {
+func TestNewBnbServiceWithOptionsConfigShareCapabilitiesMetrics(t *testing.T) {
 	cfg := PreParamsConfig{
 		Enabled:             false,
 		TargetSize:          2,
@@ -383,12 +381,14 @@ func TestNewBnbServiceWithOptionsConfigShareStoreMetrics(t *testing.T) {
 		FileCacheEnabled:    false,
 		FileCacheDir:        ".tmp/test",
 	}
-	store := stubShareStore{}
+	reader := stubShareReader{}
+	writer := stubShareWriter{}
 
 	svc := NewBnbService(
 		slog.Default(),
 		WithPreParamsConfig(cfg),
-		WithShareStore(store),
+		WithShareReader(reader),
+		WithShareWriter(writer),
 		WithMetrics(bnbutils.NoopMetrics{}),
 	)
 	if svc == nil {

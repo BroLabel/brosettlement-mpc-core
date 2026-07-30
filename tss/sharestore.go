@@ -6,14 +6,8 @@ import (
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 )
 
-const (
-	ShareStatusActive   = coreshares.StatusActive
-	ShareStatusDisabled = coreshares.StatusDisabled
-)
-
 var (
 	ErrShareNotFound         = coreshares.ErrShareNotFound
-	ErrShareDisabled         = coreshares.ErrShareDisabled
 	ErrInvalidSharePayload   = coreshares.ErrInvalidSharePayload
 	ErrVaultUnavailable      = coreshares.ErrVaultUnavailable
 	ErrVaultPermissionDenied = coreshares.ErrVaultPermissionDenied
@@ -25,7 +19,9 @@ var (
 
 type StoredShare = coreshares.StoredShare
 type ShareMeta = coreshares.ShareMeta
-type ShareStore = coreshares.Store
+type ShareReader = coreshares.ShareReader
+type ShareWriter = coreshares.ShareWriter
+type SaveShareInput = coreshares.SaveShareInput
 type ECDSAKeyMaterial = coreshares.ECDSAKeyMaterial
 type KeyMaterialMeta = coreshares.KeyMaterialMeta
 type ECDSAKeyMaterialEvidence = coreshares.ECDSAKeyMaterialEvidence

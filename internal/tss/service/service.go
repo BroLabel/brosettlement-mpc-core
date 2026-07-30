@@ -16,10 +16,11 @@ type Service struct {
 	logger          *slog.Logger
 	preParamsPool   LifecyclePool
 	preParamsSource PreParamsPool
-	shareStore      ShareStore
+	shareReader     ShareReader
+	shareWriter     ShareWriter
 }
 
-func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareStore ShareStore, externalSource ...PreParamsPool) *Service {
+func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareReader ShareReader, shareWriter ShareWriter, externalSource ...PreParamsPool) *Service {
 	if r == nil {
 		panic(ErrNilRunner)
 	}
@@ -32,7 +33,8 @@ func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareStore ShareStor
 		logger:          logger,
 		preParamsPool:   pool,
 		preParamsSource: source,
-		shareStore:      shareStore,
+		shareReader:     shareReader,
+		shareWriter:     shareWriter,
 	}
 }
 
@@ -97,8 +99,8 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-	importNoStoreECDSAKeyMaterial(s.runner, s.shareStore, keyID, share, material)
-	if err = persistECDSAShareAfterDKG(ctx, s.shareStore, s.runner, in.SessionID, job, keyID, share, material); err != nil {
+	importNoStoreECDSAKeyMaterial(s.runner, s.shareWriter, keyID, share, material)
+	if err = persistECDSAShareAfterDKG(ctx, s.shareWriter, s.runner, in.SessionID, job, keyID, in.OpaqueDescriptorFingerprint, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
 	}
@@ -122,7 +124,7 @@ func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 	tsslogging.LogSessionStart(s.logger, "sign", in.SessionID, in.OrgID, in.KeyID, in.LocalPartyID)
 	started := time.Now()
 	var err error
-	job, err = prepareDerivedECDSASignJob(ctx, s.shareStore, s.runner, job, in)
+	job, err = prepareDerivedECDSASignJob(ctx, s.shareReader, s.runner, job, in)
 	if err == nil {
 		err = s.runner.RunSign(ctx, job, in.Transport)
 	}

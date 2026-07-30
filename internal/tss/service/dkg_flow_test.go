@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/elliptic"
 	"encoding/hex"
@@ -45,7 +46,7 @@ func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
 	externalSource := &stubPreParamsSource{preParams: &ecdsakeygen.LocalPreParams{}}
 	logger := newTestLogger()
-	svc := New(runner, logger, internalPool, nil, externalSource)
+	svc := New(runner, logger, internalPool, nil, nil, externalSource)
 
 	output, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -82,7 +83,7 @@ func TestRunDKGSession_UsesInternalPoolWhenExternalPreParamsSourceMissing(t *tes
 	runner := newECDSASecp256k1StubRunner(t, "session-2")
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
 	logger := newTestLogger()
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-2",
@@ -114,7 +115,7 @@ func TestRunDKGSession_ReturnsMissingPublicKeyError(t *testing.T) {
 	runner := newECDSAStubRunnerWithoutPub(t, "session-1")
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -144,7 +145,7 @@ func TestRunDKGSession_ReturnsMissingPublicKeyForNonSecp256k1Share(t *testing.T)
 	}
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -170,7 +171,7 @@ func TestRunDKGSession_UsesExplicitECDSAKeyIDBeforeCleanup(t *testing.T) {
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -200,22 +201,24 @@ func TestRunDKGSession_UsesExplicitECDSAKeyIDBeforeCleanup(t *testing.T) {
 
 func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	store := &recordingShareStore{runner: runner, sessionID: "session-1"}
+	writer := &recordingShareWriter{runner: runner, sessionID: "session-1"}
+	fingerprint := []byte("opaque-fingerprint")
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, store)
+	svc := New(runner, logger, internalPool, nil, writer)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
-		SessionID:          "session-1",
-		KeyID:              "key-1",
-		LocalPartyID:       "p1",
-		OrgID:              "org",
-		Parties:            []string{"p1", "p2"},
-		Threshold:          1,
-		Algorithm:          "ecdsa",
-		DerivationMaterial: validDKGMaterial(),
-		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
+		SessionID:                   "session-1",
+		KeyID:                       "key-1",
+		LocalPartyID:                "p1",
+		OrgID:                       "org",
+		Parties:                     []string{"p1", "p2"},
+		OpaqueDescriptorFingerprint: fingerprint,
+		Threshold:                   1,
+		Algorithm:                   "ecdsa",
+		DerivationMaterial:          validDKGMaterial(),
+		MissingPub:                  errMissingPublicKey,
+		MissingAddr:                 errMissingAddress,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
@@ -223,14 +226,20 @@ func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	if out.KeyID != "key-1" {
 		t.Fatalf("expected explicit key id, got %q", out.KeyID)
 	}
-	if len(store.savedBlob) == 0 {
+	if len(writer.savedInput.CodecBlob) == 0 {
 		t.Fatal("expected share to be persisted")
 	}
-	if store.savedKeyID != "key-1" {
-		t.Fatalf("expected persisted key id key-1, got %q", store.savedKeyID)
+	if writer.savedInput.KeyID != "key-1" {
+		t.Fatalf("expected persisted key id key-1, got %q", writer.savedInput.KeyID)
 	}
-	if store.savedMeta.KeyID != "key-1" {
-		t.Fatalf("expected persisted metadata key id key-1, got %q", store.savedMeta.KeyID)
+	if writer.savedInput.SessionID != "session-1" {
+		t.Fatalf("expected persisted session id session-1, got %q", writer.savedInput.SessionID)
+	}
+	if writer.savedInput.LocalPartyID != "p1" {
+		t.Fatalf("expected persisted local party id p1, got %q", writer.savedInput.LocalPartyID)
+	}
+	if !bytes.Equal(writer.savedInput.OpaqueDescriptorFingerprint, fingerprint) {
+		t.Fatal("opaque descriptor fingerprint did not reach writer")
 	}
 	wantEvents := []string{"export:session-1", "persist:key-1", "cleanup:session-1"}
 	if !reflect.DeepEqual(runner.events, wantEvents) {
@@ -241,12 +250,41 @@ func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	}
 }
 
+func TestRunDKGSessionCopiesOpaqueDescriptorFingerprintBeforeWriterCall(t *testing.T) {
+	runner := newECDSASecp256k1StubRunner(t, "session-1")
+	writer := &mutatingShareWriter{}
+	fingerprint := []byte{0x11, 0x22}
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil, writer)
+
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:                   "session-1",
+		KeyID:                       "key-1",
+		LocalPartyID:                "p1",
+		OpaqueDescriptorFingerprint: fingerprint,
+		Parties:                     []string{"p1", "p2"},
+		Threshold:                   1,
+		Algorithm:                   "ecdsa",
+		DerivationMaterial:          validDKGMaterial(),
+		MissingPub:                  errMissingPublicKey,
+		MissingAddr:                 errMissingAddress,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession returned error: %v", err)
+	}
+	if !bytes.Equal(fingerprint, []byte{0x11, 0x22}) {
+		t.Fatal("writer mutated caller-owned descriptor fingerprint")
+	}
+	if !bytes.Equal(writer.received.OpaqueDescriptorFingerprint, []byte{0x11, 0x22}) {
+		t.Fatal("writer did not receive original descriptor fingerprint")
+	}
+}
+
 func TestRunDKGSession_PersistFailureKeepsRunnerShare(t *testing.T) {
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	store := &failingShareStore{err: errPersistFailed}
+	writer := &failingShareWriter{err: errPersistFailed}
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, store)
+	svc := New(runner, logger, internalPool, nil, writer)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -279,7 +317,7 @@ func TestRunDKGThenSign_NoStoreKeepsRunnerShare(t *testing.T) {
 	runner.requireShareForSign = true
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	if _, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "key-1",
@@ -329,7 +367,7 @@ func TestRunDKGSession_EdDSAReturnsKeyIDOnly(t *testing.T) {
 	runner := &stubRunner{}
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-eddsa",
@@ -354,8 +392,8 @@ func TestRunDKGSession_EdDSAReturnsKeyIDOnly(t *testing.T) {
 func TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial(t *testing.T) {
 	chainCode := strings.Repeat("11", 32)
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	store := &recordingShareStore{runner: runner, sessionID: "session-1"}
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, store)
+	writer := &recordingShareWriter{runner: runner, sessionID: "session-1"}
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil, writer)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-1",
@@ -388,27 +426,15 @@ func TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial(t *testing.
 	if out.DerivationScheme != "bip32_secp256k1" {
 		t.Fatalf("DerivationScheme = %q", out.DerivationScheme)
 	}
-	material, err := coreshares.UnmarshalKeyMaterial(store.savedBlob)
+	material, err := coreshares.UnmarshalKeyMaterial(writer.savedInput.CodecBlob)
 	if err != nil {
 		t.Fatalf("UnmarshalKeyMaterial returned error: %v", err)
 	}
 	if hex.EncodeToString(material.ChainCode) != chainCode {
 		t.Fatalf("persisted chain code mismatch: %x", material.ChainCode)
 	}
-	if store.savedKeyID != "key-1" {
-		t.Fatalf("persisted key id = %q", store.savedKeyID)
-	}
-	if store.savedMeta.Version != 2 {
-		t.Fatalf("persisted metadata version = %d", store.savedMeta.Version)
-	}
-	if !store.savedMeta.ChainCodePresent {
-		t.Fatal("expected persisted metadata to record chain code presence")
-	}
-	if store.savedMeta.PublicKeyFormat != "uncompressed_hex" {
-		t.Fatalf("persisted metadata public key format = %q", store.savedMeta.PublicKeyFormat)
-	}
-	if store.savedMeta.DerivationScheme != "bip32_secp256k1" {
-		t.Fatalf("persisted metadata derivation scheme = %q", store.savedMeta.DerivationScheme)
+	if writer.savedInput.KeyID != "key-1" {
+		t.Fatalf("persisted key id = %q", writer.savedInput.KeyID)
 	}
 }
 

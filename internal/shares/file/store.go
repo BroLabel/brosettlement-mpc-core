@@ -16,33 +16,37 @@ type Store struct {
 }
 
 type onDiskShare struct {
-	Ref        shares.KeyRef    `json:"ref"`
-	Meta       shares.ShareMeta `json:"meta"`
-	Ciphertext []byte           `json:"ciphertext"`
+	SessionID                   string `json:"session_id"`
+	KeyID                       string `json:"key_id"`
+	LocalPartyID                string `json:"local_party_id"`
+	OpaqueDescriptorFingerprint []byte `json:"opaque_descriptor_fingerprint"`
+	Ciphertext                  []byte `json:"ciphertext"`
 }
 
 var (
-	_ shares.Source = (*Store)(nil)
-	_ shares.Sink   = (*Store)(nil)
+	_ shares.ShareReader = (*Store)(nil)
+	_ shares.ShareWriter = (*Store)(nil)
 )
 
 func NewStore(cfg Config) *Store {
 	return &Store{cfg: cfg}
 }
 
-func (s *Store) SaveShare(ctx context.Context, in shares.ShareToSave) error {
+func (s *Store) SaveShare(ctx context.Context, in shares.SaveShareInput) error {
 	if err := s.cfg.validate(); err != nil {
 		return err
 	}
-	ciphertext, err := s.cfg.Cipher.Encrypt(ctx, in.Plaintext)
+	ciphertext, err := s.cfg.Cipher.Encrypt(ctx, in.CodecBlob)
 	if err != nil {
 		return fmt.Errorf("encrypt share: %w", err)
 	}
 
 	blob, err := json.Marshal(onDiskShare{
-		Ref:        in.Ref,
-		Meta:       in.Meta,
-		Ciphertext: ciphertext,
+		SessionID:                   in.SessionID,
+		KeyID:                       in.KeyID,
+		LocalPartyID:                in.LocalPartyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), in.OpaqueDescriptorFingerprint...),
+		Ciphertext:                  ciphertext,
 	})
 	if err != nil {
 		return fmt.Errorf("encode encrypted share: %w", err)
@@ -54,7 +58,7 @@ func (s *Store) SaveShare(ctx context.Context, in shares.ShareToSave) error {
 	return nil
 }
 
-func (s *Store) LoadShare(ctx context.Context, ref shares.KeyRef) (*shares.LoadedShare, error) {
+func (s *Store) LoadShare(ctx context.Context, keyID string) (*shares.StoredShare, error) {
 	if err := s.cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -71,7 +75,7 @@ func (s *Store) LoadShare(ctx context.Context, ref shares.KeyRef) (*shares.Loade
 	if err := json.Unmarshal(blob, &disk); err != nil {
 		return nil, fmt.Errorf("%w: decode encrypted share: %v", shares.ErrInvalidSharePayload, err)
 	}
-	if disk.Ref.KeyID != ref.KeyID || disk.Ref.OrgID != ref.OrgID || disk.Ref.Role != ref.Role {
+	if disk.KeyID != keyID {
 		return nil, shares.ErrMetadataMismatch
 	}
 
@@ -80,9 +84,7 @@ func (s *Store) LoadShare(ctx context.Context, ref shares.KeyRef) (*shares.Loade
 		return nil, fmt.Errorf("decrypt share: %w", err)
 	}
 
-	return &shares.LoadedShare{
-		Ref:       disk.Ref,
-		Plaintext: plaintext,
-		Meta:      disk.Meta,
+	return &shares.StoredShare{
+		Blob: plaintext,
 	}, nil
 }

@@ -29,7 +29,8 @@ type ServiceOption func(*serviceOptions)
 type serviceOptions struct {
 	preParamsConfig    PreParamsConfig
 	hasPreParamsConfig bool
-	shareStore         ShareStore
+	shareReader        ShareReader
+	shareWriter        ShareWriter
 	metrics            bnbutils.Metrics
 	preParamsSource    PreParamsSource
 }
@@ -58,10 +59,11 @@ type SignSessionDescriptor struct {
 }
 
 type DKGSessionRequest struct {
-	Session            DKGSessionDescriptor
-	LocalPartyID       string
-	DerivationMaterial *DKGDerivationMaterial
-	Transport          Transport
+	Session                     DKGSessionDescriptor
+	LocalPartyID                string
+	OpaqueDescriptorFingerprint []byte
+	DerivationMaterial          *DKGDerivationMaterial
+	Transport                   Transport
 }
 
 type SignSessionRequest struct {
@@ -97,9 +99,15 @@ func WithPreParamsConfig(cfg PreParamsConfig) ServiceOption {
 	}
 }
 
-func WithShareStore(store ShareStore) ServiceOption {
+func WithShareReader(reader ShareReader) ServiceOption {
 	return func(opts *serviceOptions) {
-		opts.shareStore = store
+		opts.shareReader = reader
+	}
+}
+
+func WithShareWriter(writer ShareWriter) ServiceOption {
+	return func(opts *serviceOptions) {
+		opts.shareWriter = writer
 	}
 }
 
@@ -127,7 +135,8 @@ func NewBnbService(logger *slog.Logger, opts ...ServiceOption) *Service {
 		tssbnbrunner.NewBnbRunner(logger, runnerOpts...),
 		logger,
 		pool,
-		options.shareStore,
+		options.shareReader,
+		options.shareWriter,
 		options.preParamsSource,
 	)
 }
@@ -161,9 +170,9 @@ func newPreParamsPool(logger *slog.Logger, opts serviceOptions) preParamsProvide
 	})
 }
 
-func newService(r runner, logger *slog.Logger, pool preParamsProvider, shareStore ShareStore, source PreParamsSource) *Service {
+func newService(r runner, logger *slog.Logger, pool preParamsProvider, shareReader ShareReader, shareWriter ShareWriter, source PreParamsSource) *Service {
 	return &Service{
-		impl: tssservice.New(r, logger, pool, shareStore, source),
+		impl: tssservice.New(r, logger, pool, shareReader, shareWriter, source),
 	}
 }
 
@@ -191,19 +200,20 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 		}
 	}
 	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
-		SessionID:          req.Session.SessionID,
-		LocalPartyID:       req.LocalPartyID,
-		OrgID:              req.Session.OrgID,
-		KeyID:              req.Session.KeyID,
-		Parties:            req.Session.Parties,
-		Threshold:          req.Session.Threshold,
-		Curve:              req.Session.Curve,
-		Algorithm:          req.Session.Algorithm,
-		DerivationMaterial: material,
-		Transport:          req.Transport,
-		EmptyKeyErr:        ErrKeyIDRequired,
-		MissingPub:         ErrMissingDKGPublicKey,
-		MissingAddr:        ErrMissingDKGAddress,
+		SessionID:                   req.Session.SessionID,
+		LocalPartyID:                req.LocalPartyID,
+		OrgID:                       req.Session.OrgID,
+		KeyID:                       req.Session.KeyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), req.OpaqueDescriptorFingerprint...),
+		Parties:                     req.Session.Parties,
+		Threshold:                   req.Session.Threshold,
+		Curve:                       req.Session.Curve,
+		Algorithm:                   req.Session.Algorithm,
+		DerivationMaterial:          material,
+		Transport:                   req.Transport,
+		EmptyKeyErr:                 ErrKeyIDRequired,
+		MissingPub:                  ErrMissingDKGPublicKey,
+		MissingAddr:                 ErrMissingDKGAddress,
 	})
 }
 

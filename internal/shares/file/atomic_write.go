@@ -6,20 +6,34 @@ import (
 	"path/filepath"
 )
 
+type atomicFileOperations struct {
+	createTemp func(dir, pattern string) (*os.File, error)
+	link       func(oldname, newname string) error
+	remove     func(name string) error
+}
+
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
+	return atomicWriteWithOperations(path, data, perm, atomicFileOperations{
+		createTemp: os.CreateTemp,
+		link:       os.Link,
+		remove:     os.Remove,
+	})
+}
+
+func atomicWriteWithOperations(path string, data []byte, perm os.FileMode, ops atomicFileOperations) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create parent dir: %w", err)
 	}
 
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	tmp, err := ops.createTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 
 	cleanup := func() {
-		_ = os.Remove(tmpPath)
+		_ = ops.remove(tmpPath)
 	}
 
 	if err := tmp.Chmod(perm); err != nil {
@@ -42,13 +56,11 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := ops.link(tmpPath, path); err != nil {
 		cleanup()
-		return fmt.Errorf("rename temp file: %w", err)
+		return fmt.Errorf("publish share: %w", err)
 	}
-	if err := os.Chmod(path, perm); err != nil {
-		return fmt.Errorf("set final file mode: %w", err)
-	}
+	_ = ops.remove(tmpPath)
 
 	return nil
 }

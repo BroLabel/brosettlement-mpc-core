@@ -19,28 +19,31 @@ func TestFileStoreSavesAndLoadsEncryptedShare(t *testing.T) {
 		Cipher: fakeCipher{},
 	})
 
-	err := store.SaveShare(context.Background(), shares.ShareToSave{
-		Ref:       shares.KeyRef{KeyID: "key_1", OrgID: "org_1"},
-		Plaintext: []byte("secret"),
+	err := store.SaveShare(context.Background(), shares.SaveShareInput{
+		SessionID:                   "session_1",
+		KeyID:                       "key_1",
+		LocalPartyID:                "party_b",
+		OpaqueDescriptorFingerprint: []byte("opaque-fingerprint"),
+		CodecBlob:                   []byte("codec-blob"),
 	})
 	if err != nil {
 		t.Fatalf("save share: %v", err)
 	}
 
-	out, err := store.LoadShare(context.Background(), shares.KeyRef{KeyID: "key_1", OrgID: "org_1"})
+	out, err := store.LoadShare(context.Background(), "key_1")
 	if err != nil {
 		t.Fatalf("load share: %v", err)
 	}
-	if string(out.Plaintext) != "secret" {
-		t.Fatalf("plaintext mismatch: got=%q", string(out.Plaintext))
+	if string(out.Blob) != "codec-blob" {
+		t.Fatalf("codec blob mismatch: got=%q", string(out.Blob))
 	}
 
 	onDisk, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
-	if string(onDisk) == "secret" {
-		t.Fatalf("plaintext leaked to disk")
+	if string(onDisk) == "codec-blob" {
+		t.Fatalf("codec blob leaked to disk")
 	}
 
 	info, err := os.Stat(path)
@@ -49,6 +52,44 @@ func TestFileStoreSavesAndLoadsEncryptedShare(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("invalid file mode: got=%#o", info.Mode().Perm())
+	}
+}
+
+func TestFileStoreDoesNotRewritePublishedBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "share-b.enc")
+	store := NewStore(Config{
+		Path:   path,
+		Cipher: fakeCipher{},
+	})
+	ctx := context.Background()
+	first := shares.SaveShareInput{
+		SessionID:    "session_1",
+		KeyID:        "key_1",
+		LocalPartyID: "party_b",
+		CodecBlob:    []byte("first-publication"),
+	}
+	if err := store.SaveShare(ctx, first); err != nil {
+		t.Fatalf("save first publication: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read first publication: %v", err)
+	}
+
+	if err := store.SaveShare(ctx, shares.SaveShareInput{
+		SessionID:    first.SessionID,
+		KeyID:        first.KeyID,
+		LocalPartyID: first.LocalPartyID,
+		CodecBlob:    []byte("replacement-publication"),
+	}); err == nil {
+		t.Fatal("expected second publication to be rejected")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read retained publication: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("published bytes were rewritten")
 	}
 }
 

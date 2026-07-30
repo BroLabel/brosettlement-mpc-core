@@ -71,18 +71,18 @@ func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material norm
 	}, share, nil
 }
 
-func persistECDSAShareAfterDKG(ctx context.Context, shareStore ShareStore, runner Runner, sessionID string, job tssbnbrunner.DKGJob, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) error {
-	if shareStore == nil {
+func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, runner Runner, sessionID string, job tssbnbrunner.DKGJob, keyID string, opaqueDescriptorFingerprint []byte, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) error {
+	if shareWriter == nil {
 		return nil
 	}
-	if err := tssruntime.PersistKeyMaterialAfterDKG(ctx, shareStore, share, tssruntime.DKGPersistInput{
-		KeyID:            keyID,
-		OrgID:            job.OrgID,
-		Algorithm:        job.Algorithm,
-		Curve:            job.Curve,
-		ChainCode:        append([]byte(nil), material.ChainCode...),
-		PublicKeyFormat:  corederivation.PublicKeyFormatUncompressedHex,
-		DerivationScheme: material.Scheme,
+	if err := tssruntime.PersistKeyMaterialAfterDKG(ctx, shareWriter, share, tssruntime.DKGPersistInput{
+		SessionID:                   sessionID,
+		KeyID:                       keyID,
+		LocalPartyID:                job.LocalPartyID,
+		OpaqueDescriptorFingerprint: opaqueDescriptorFingerprint,
+		ChainCode:                   append([]byte(nil), material.ChainCode...),
+		PublicKeyFormat:             corederivation.PublicKeyFormatUncompressedHex,
+		DerivationScheme:            material.Scheme,
 	}); err != nil {
 		return err
 	}
@@ -90,8 +90,8 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareStore ShareStore, runne
 	return nil
 }
 
-func importNoStoreECDSAKeyMaterial(runner Runner, shareStore ShareStore, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) {
-	if shareStore != nil || len(material.ChainCode) != 32 {
+func importNoStoreECDSAKeyMaterial(runner Runner, shareWriter ShareWriter, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) {
+	if shareWriter != nil || len(material.ChainCode) != 32 {
 		return
 	}
 	runner.ImportECDSAKeyMaterial(keyID, coreshares.ECDSAKeyMaterial{

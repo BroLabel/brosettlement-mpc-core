@@ -63,14 +63,14 @@ func (s *Service) StopPreParamsPool() error {
 }
 
 func (s *Service) Snapshot() Snapshot {
-	if s == nil || s.preParamsPool == nil {
+	if s == nil {
 		return Snapshot{}
 	}
 	var provider SnapshotProvider
 	if details, ok := s.preParamsPool.(SnapshotProvider); ok {
 		provider = details
 	}
-	return BuildSnapshot(s.preParamsPool, provider)
+	return BuildSnapshot(s.preParamsPool, provider, s.preParamsBinding.Snapshot())
 }
 
 func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {

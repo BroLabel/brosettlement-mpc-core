@@ -3,6 +3,7 @@ package preparams
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
@@ -25,7 +26,15 @@ const (
 
 // ServiceBinding identifies the service instance that owns a handle.
 type ServiceBinding struct {
-	_ byte
+	consumed             atomic.Uint64
+	discardedBeforeStart atomic.Uint64
+	consumeConflict      atomic.Uint64
+}
+
+type HandleMetrics struct {
+	ConsumedCount             uint64
+	DiscardedBeforeStartCount uint64
+	ConsumeConflictCount      uint64
 }
 
 // Handle owns one opaque set of DKG pre-parameters.
@@ -38,6 +47,17 @@ type Handle struct {
 
 func NewServiceBinding() *ServiceBinding {
 	return &ServiceBinding{}
+}
+
+func (b *ServiceBinding) Snapshot() HandleMetrics {
+	if b == nil {
+		return HandleMetrics{}
+	}
+	return HandleMetrics{
+		ConsumedCount:             b.consumed.Load(),
+		DiscardedBeforeStartCount: b.discardedBeforeStart.Load(),
+		ConsumeConflictCount:      b.consumeConflict.Load(),
+	}
 }
 
 func NewHandle(binding *ServiceBinding, material *ecdsakeygen.LocalPreParams) *Handle {
@@ -66,6 +86,7 @@ func (h *Handle) Discard() error {
 	case handleStateAcquired:
 		h.material = nil
 		h.state = handleStateDiscarded
+		h.binding.discardedBeforeStart.Add(1)
 		return nil
 	case handleStateDiscarded:
 		return nil
@@ -95,10 +116,13 @@ func Consume(binding *ServiceBinding, handle *Handle) (*ecdsakeygen.LocalPrePara
 		material := handle.material
 		handle.material = nil
 		handle.state = handleStateConsumed
+		binding.consumed.Add(1)
 		return material, nil
 	case handleStateConsumed:
+		binding.consumeConflict.Add(1)
 		return nil, ErrPreParamsConsumed
 	case handleStateDiscarded:
+		binding.consumeConflict.Add(1)
 		return nil, ErrPreParamsDiscarded
 	default:
 		return nil, ErrInvalidPreParamsHandle

@@ -22,6 +22,9 @@ func TestHandleRejectsNilAndForgedValues(t *testing.T) {
 	if _, err := Consume(binding, forged); !errors.Is(err, ErrInvalidPreParamsHandle) {
 		t.Fatalf("forged consume error = %v, want ErrInvalidPreParamsHandle", err)
 	}
+	if got := binding.Snapshot(); got != (HandleMetrics{}) {
+		t.Fatalf("invalid attempts changed metrics: %+v", got)
+	}
 }
 
 func TestHandleRejectsForeignServiceWithoutConsuming(t *testing.T) {
@@ -32,8 +35,23 @@ func TestHandleRejectsForeignServiceWithoutConsuming(t *testing.T) {
 	if _, err := Consume(foreign, handle); !errors.Is(err, ErrForeignPreParamsHandle) {
 		t.Fatalf("foreign consume error = %v, want ErrForeignPreParamsHandle", err)
 	}
+	if got := foreign.Snapshot(); got != (HandleMetrics{}) {
+		t.Fatalf("foreign attempt changed foreign metrics: %+v", got)
+	}
+	if got := owner.Snapshot(); got != (HandleMetrics{}) {
+		t.Fatalf("foreign attempt changed owner metrics: %+v", got)
+	}
 	if _, err := Consume(owner, handle); err != nil {
 		t.Fatalf("owner consume failed after foreign attempt: %v", err)
+	}
+	if _, err := Consume(foreign, handle); !errors.Is(err, ErrForeignPreParamsHandle) {
+		t.Fatalf("foreign consume after owner transition error = %v, want ErrForeignPreParamsHandle", err)
+	}
+	if got := foreign.Snapshot(); got != (HandleMetrics{}) {
+		t.Fatalf("foreign terminal-state attempt changed foreign metrics: %+v", got)
+	}
+	if got := owner.Snapshot(); got != (HandleMetrics{ConsumedCount: 1}) {
+		t.Fatalf("foreign terminal-state attempt changed owner metrics: %+v", got)
 	}
 }
 
@@ -50,6 +68,13 @@ func TestHandleDiscardIsIdempotentAndBlocksConsume(t *testing.T) {
 	if _, err := Consume(binding, handle); !errors.Is(err, ErrPreParamsDiscarded) {
 		t.Fatalf("consume after discard error = %v, want ErrPreParamsDiscarded", err)
 	}
+	if _, err := Consume(binding, handle); !errors.Is(err, ErrPreParamsDiscarded) {
+		t.Fatalf("repeated consume after discard error = %v, want ErrPreParamsDiscarded", err)
+	}
+	want := HandleMetrics{DiscardedBeforeStartCount: 1, ConsumeConflictCount: 2}
+	if got := binding.Snapshot(); got != want {
+		t.Fatalf("metrics = %+v, want %+v", got, want)
+	}
 }
 
 func TestHandleConsumedStateRejectsDiscardAndRepeatedConsume(t *testing.T) {
@@ -64,6 +89,13 @@ func TestHandleConsumedStateRejectsDiscardAndRepeatedConsume(t *testing.T) {
 	}
 	if _, err := Consume(binding, handle); !errors.Is(err, ErrPreParamsConsumed) {
 		t.Fatalf("repeated consume error = %v, want ErrPreParamsConsumed", err)
+	}
+	if _, err := Consume(binding, handle); !errors.Is(err, ErrPreParamsConsumed) {
+		t.Fatalf("second repeated consume error = %v, want ErrPreParamsConsumed", err)
+	}
+	want := HandleMetrics{ConsumedCount: 1, ConsumeConflictCount: 2}
+	if got := binding.Snapshot(); got != want {
+		t.Fatalf("metrics = %+v, want %+v", got, want)
 	}
 }
 
@@ -96,9 +128,17 @@ func TestHandleConcurrentConsumeDiscardHasExactlyOneWinner(t *testing.T) {
 			if !errors.Is(discardErr, ErrPreParamsConsumed) {
 				t.Fatalf("iteration %d: consume won, discard error = %v", iteration, discardErr)
 			}
+			want := HandleMetrics{ConsumedCount: 1}
+			if got := binding.Snapshot(); got != want {
+				t.Fatalf("iteration %d: metrics = %+v, want %+v", iteration, got, want)
+			}
 		case discardErr == nil:
 			if !errors.Is(consumeErr, ErrPreParamsDiscarded) {
 				t.Fatalf("iteration %d: discard won, consume error = %v", iteration, consumeErr)
+			}
+			want := HandleMetrics{DiscardedBeforeStartCount: 1, ConsumeConflictCount: 1}
+			if got := binding.Snapshot(); got != want {
+				t.Fatalf("iteration %d: metrics = %+v, want %+v", iteration, got, want)
 			}
 		default:
 			t.Fatalf("iteration %d: no transition winner: consume=%v discard=%v", iteration, consumeErr, discardErr)

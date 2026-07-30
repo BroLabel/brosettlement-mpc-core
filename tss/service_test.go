@@ -416,6 +416,16 @@ func TestRunDKGSessionWithPreParamsConsumesPublicHandle(t *testing.T) {
 	if err := handle.Discard(); !errors.Is(err, ErrPreParamsConsumed) {
 		t.Fatalf("discard after run error = %v, want ErrPreParamsConsumed", err)
 	}
+	if _, err := service.RunDKGSessionWithPreParams(context.Background(), request, handle); !errors.Is(err, ErrPreParamsConsumed) {
+		t.Fatalf("repeated run error = %v, want ErrPreParamsConsumed", err)
+	}
+	wantSnapshot := Snapshot{
+		PreParamsConsumedCount:        1,
+		PreParamsConsumeConflictCount: 1,
+	}
+	if got := service.Snapshot(); got != wantSnapshot {
+		t.Fatalf("Snapshot() = %+v, want %+v", got, wantSnapshot)
+	}
 }
 
 func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {

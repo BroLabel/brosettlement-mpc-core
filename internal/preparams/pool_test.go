@@ -6,6 +6,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -139,6 +142,9 @@ func TestPoolCloseStopsWorkers(t *testing.T) {
 	}
 	if _, err := pool.Acquire(context.Background()); !errors.Is(err, ErrPoolClosed) {
 		t.Fatalf("Acquire() err = %v, want ErrPoolClosed", err)
+	}
+	if snapshot := pool.Snapshot(); snapshot.AcquireCount != 0 || snapshot.AcquireFailedCount != 1 {
+		t.Fatalf("closed acquire metrics = success:%d failed:%d, want 0:1", snapshot.AcquireCount, snapshot.AcquireFailedCount)
 	}
 }
 
@@ -276,4 +282,136 @@ func TestPoolConcurrentAcquire(t *testing.T) {
 			t.Fatalf("Acquire() error = %v", err)
 		}
 	}
+}
+
+func TestPoolDurableAcquireOrdersValidationBeforeUnlinkAndDirectorySync(t *testing.T) {
+	cacheDir := t.TempDir()
+	cachePath := filepath.Join(cacheDir, "fake-material.gob")
+	if err := os.WriteFile(cachePath, []byte("non-secret-test-material"), 0o600); err != nil {
+		t.Fatalf("write cache entry: %v", err)
+	}
+
+	var events []string
+	fs := &recordingCacheFS{
+		cacheFS: newOSCacheFS(),
+		onRemove: func(path string) {
+			if path == cachePath {
+				events = append(events, "unlink")
+			}
+		},
+		onSyncDir: func(path string) {
+			if path == cacheDir {
+				events = append(events, "directory-sync")
+			}
+		},
+	}
+	pool := newPoolForTest(testLogger(), acquireTestConfig(cacheDir), nil,
+		func(params *ecdsakeygen.LocalPreParams) bool {
+			events = append(events, "validate")
+			return params != nil
+		},
+	)
+	pool.fs = fs
+	pool.runCtx = context.Background()
+	pool.ch <- item{params: &ecdsakeygen.LocalPreParams{}, cachePath: cachePath}
+
+	got, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if got == nil {
+		t.Fatal("Acquire() returned nil")
+	}
+	if want := []string{"validate", "unlink", "directory-sync"}; !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	if _, err := os.Stat(cachePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cache entry still exists or stat failed unexpectedly: %v", err)
+	}
+	snapshot := pool.Snapshot()
+	if snapshot.AcquireCount != 1 || snapshot.AcquireFailedCount != 0 {
+		t.Fatalf("acquire metrics = success:%d failed:%d, want 1:0", snapshot.AcquireCount, snapshot.AcquireFailedCount)
+	}
+}
+
+func TestPoolAcquireFailuresNeverReturnOrRequeueMaterial(t *testing.T) {
+	unlinkErr := errors.New("unlink unavailable")
+	syncErr := errors.New("directory sync unavailable")
+
+	tests := []struct {
+		name       string
+		cacheFile  bool
+		cachePath  bool
+		validate   bool
+		removeErr  error
+		syncDirErr error
+		wantErr    error
+	}{
+		{name: "validation", cacheFile: true, cachePath: true, validate: false, wantErr: ErrInvalidCachedPreParams},
+		{name: "missing cache binding", validate: true, wantErr: ErrCachePathRequired},
+		{name: "missing", cachePath: true, validate: true, wantErr: os.ErrNotExist},
+		{name: "unlink", cacheFile: true, cachePath: true, validate: true, removeErr: unlinkErr, wantErr: unlinkErr},
+		{name: "directory sync", cacheFile: true, cachePath: true, validate: true, syncDirErr: syncErr, wantErr: syncErr},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cacheDir := t.TempDir()
+			cachePath := filepath.Join(cacheDir, "fake-material.gob")
+			if tt.cacheFile {
+				if err := os.WriteFile(cachePath, []byte("non-secret-test-material"), 0o600); err != nil {
+					t.Fatalf("write cache entry: %v", err)
+				}
+			}
+
+			fs := &recordingCacheFS{
+				cacheFS:   newOSCacheFS(),
+				removeErr: tt.removeErr,
+				syncDirErr: func(path string) error {
+					if path == cacheDir {
+						return tt.syncDirErr
+					}
+					return nil
+				},
+			}
+			pool := newPoolForTest(testLogger(), acquireTestConfig(cacheDir), nil,
+				func(params *ecdsakeygen.LocalPreParams) bool {
+					return tt.validate && params != nil
+				},
+			)
+			pool.fs = fs
+			pool.runCtx = context.Background()
+			queuedPath := ""
+			if tt.cachePath {
+				queuedPath = cachePath
+			}
+			pool.ch <- item{params: &ecdsakeygen.LocalPreParams{}, cachePath: queuedPath}
+
+			got, err := pool.Acquire(context.Background())
+			if got != nil {
+				t.Fatal("Acquire() returned material on failure")
+			}
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Acquire() error = %v, want %v", err, tt.wantErr)
+			}
+			if pool.Size() != 0 {
+				t.Fatalf("pool size = %d, want failed entry permanently dequeued", pool.Size())
+			}
+			snapshot := pool.Snapshot()
+			if snapshot.AcquireCount != 0 || snapshot.AcquireFailedCount != 1 {
+				t.Fatalf("acquire metrics = success:%d failed:%d, want 0:1", snapshot.AcquireCount, snapshot.AcquireFailedCount)
+			}
+		})
+	}
+}
+
+func acquireTestConfig(cacheDir string) Config {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 1
+	cfg.MaxConcurrency = 1
+	cfg.AcquireTimeout = 20 * time.Millisecond
+	cfg.SyncFallbackOnEmpty = false
+	cfg.FileCacheEnabled = true
+	cfg.FileCacheDir = cacheDir
+	return cfg
 }

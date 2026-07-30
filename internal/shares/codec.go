@@ -4,11 +4,21 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"io"
 
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 
-const codecVersion uint32 = 2
+const (
+	codecVersion uint32 = 2
+
+	// maxKeyMaterialBlobBytes is the maximum durable codec-v2 blob. The same
+	// bound applies to MarshalKeyMaterial and UnmarshalKeyMaterial, so a blob
+	// emitted by this package is always accepted by its v2 decoder. The bound
+	// limits Gob allocation from untrusted stored input without changing the
+	// representation of accepted v2 values.
+	maxKeyMaterialBlobBytes = 1 << 20
+)
 
 type ECDSAKeyMaterial struct {
 	Share            ecdsakeygen.LocalPartySaveData
@@ -42,13 +52,24 @@ func MarshalKeyMaterial(material ECDSAKeyMaterial) ([]byte, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("%w: encode: %v", ErrInvalidSharePayload, err)
 	}
+	if buf.Len() > maxKeyMaterialBlobBytes {
+		return nil, fmt.Errorf("%w: blob exceeds %d bytes", ErrInvalidSharePayload, maxKeyMaterialBlobBytes)
+	}
 	return buf.Bytes(), nil
 }
 
 func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
+	if len(blob) > maxKeyMaterialBlobBytes {
+		return ECDSAKeyMaterial{}, fmt.Errorf("%w: blob exceeds %d bytes", ErrInvalidSharePayload, maxKeyMaterialBlobBytes)
+	}
+
+	decoder := gob.NewDecoder(bytes.NewReader(blob))
 	var env shareEnvelope
-	if err := gob.NewDecoder(bytes.NewReader(blob)).Decode(&env); err != nil {
+	if err := decoder.Decode(&env); err != nil {
 		return ECDSAKeyMaterial{}, fmt.Errorf("%w: decode: %v", ErrInvalidSharePayload, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return ECDSAKeyMaterial{}, fmt.Errorf("%w: trailing data", ErrInvalidSharePayload)
 	}
 	if env.Version != codecVersion {
 		return ECDSAKeyMaterial{}, fmt.Errorf("%w: got=%d expected=%d", ErrUnsupportedVersion, env.Version, codecVersion)

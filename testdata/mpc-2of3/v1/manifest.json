@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "corpus": "mpc-core/share-codec-v2",
+  "files": [
+    {
+      "path": "share-codec-v2/empty-share.hex",
+      "size": 1533,
+      "sha256": "98b541226db3e980bf75da761b200ad40561bf120a3cd4110b7bb98a4be90049"
+    }
+  ]
+}

@@ -280,7 +280,7 @@ func (r *facadeDerivedRunner) ExportECDSASignature(string) (common.SignatureData
 	return common.SignatureData{}, nil
 }
 
-func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(string) (ecdsakeygen.LocalPartySaveData, error) {
+func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
 	return ecdsakeygen.LocalPartySaveData{}, ErrShareNotFound
 }
 
@@ -296,8 +296,8 @@ func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key string, material coresh
 	r.materialByKey[key] = material
 }
 
-func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key string) {
-	delete(r.materialByKey, key)
+func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
+	delete(r.materialByKey, key.SessionID)
 }
 
 func (r *facadeDerivedRunner) ECDSAAddress(string) (string, error) {

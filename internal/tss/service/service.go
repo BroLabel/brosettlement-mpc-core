@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"time"
 
 	tsslogging "github.com/BroLabel/brosettlement-mpc-core/internal/tss/logging"
@@ -12,6 +14,8 @@ import (
 )
 
 type Service struct {
+	dkgMu           sync.Mutex
+	activeDKGRuns   map[tssbnbrunner.DKGRunKey]struct{}
 	runner          Runner
 	logger          *slog.Logger
 	preParamsPool   LifecyclePool
@@ -29,6 +33,7 @@ func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareReader ShareRea
 		source = externalSource[0]
 	}
 	return &Service{
+		activeDKGRuns:   make(map[tssbnbrunner.DKGRunKey]struct{}),
 		runner:          r,
 		logger:          logger,
 		preParamsPool:   pool,
@@ -65,6 +70,12 @@ func (s *Service) Snapshot() Snapshot {
 
 func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
 	job := buildDKGJob(in)
+	runKey := tssbnbrunner.DKGRunKey{SessionID: job.SessionID, LocalPartyID: job.LocalPartyID}
+	if !s.beginDKGRun(runKey) {
+		return DKGOutput{}, fmt.Errorf("%w: session=%s party=%s", ErrDuplicateDKGRun, runKey.SessionID, runKey.LocalPartyID)
+	}
+	defer s.endDKGRun(runKey)
+
 	keyID, err := resolveDKGOutputKeyID(in, job.Algorithm)
 	if err != nil {
 		return DKGOutput{}, err
@@ -100,12 +111,28 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		return DKGOutput{}, err
 	}
 	importNoStoreECDSAKeyMaterial(s.runner, s.shareWriter, keyID, share, material)
-	if err = persistECDSAShareAfterDKG(ctx, s.shareWriter, s.runner, in.SessionID, job, keyID, in.OpaqueDescriptorFingerprint, share, material); err != nil {
+	if err = persistECDSAShareAfterDKG(ctx, s.shareWriter, s.runner, runKey, keyID, in.OpaqueDescriptorFingerprint, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
 	}
 	logEnd(nil)
 	return output, nil
+}
+
+func (s *Service) beginDKGRun(key tssbnbrunner.DKGRunKey) bool {
+	s.dkgMu.Lock()
+	defer s.dkgMu.Unlock()
+	if _, exists := s.activeDKGRuns[key]; exists {
+		return false
+	}
+	s.activeDKGRuns[key] = struct{}{}
+	return true
+}
+
+func (s *Service) endDKGRun(key tssbnbrunner.DKGRunKey) {
+	s.dkgMu.Lock()
+	delete(s.activeDKGRuns, key)
+	s.dkgMu.Unlock()
 }
 
 func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {

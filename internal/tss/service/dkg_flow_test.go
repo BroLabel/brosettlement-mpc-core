@@ -6,12 +6,20 @@ import (
 	"crypto/elliptic"
 	"encoding/hex"
 	"errors"
+	"io"
+	"math/big"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
+	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
+	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
+	"github.com/bnb-chain/tss-lib/common"
+	"github.com/bnb-chain/tss-lib/crypto"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
@@ -36,6 +44,252 @@ func newECDSASecp256k1StubRunner(t *testing.T, sessionID string) *stubRunner {
 		shareByKey: map[string]ecdsakeygen.LocalPartySaveData{
 			sessionID: share,
 		},
+	}
+}
+
+type concurrentDKGRunner struct {
+	mu         sync.Mutex
+	shares     map[tssbnbrunner.DKGRunKey]ecdsakeygen.LocalPartySaveData
+	transports map[tssbnbrunner.DKGRunKey]coretransport.FrameTransport
+	started    int
+	release    chan struct{}
+}
+
+func newConcurrentDKGRunner(t *testing.T) *concurrentDKGRunner {
+	t.Helper()
+	pub := crypto.ScalarBaseMult(tsslib.S256(), big.NewInt(7))
+	if pub == nil {
+		t.Fatal("expected test public key point")
+	}
+	return &concurrentDKGRunner{
+		shares: map[tssbnbrunner.DKGRunKey]ecdsakeygen.LocalPartySaveData{
+			{SessionID: "shared-session", LocalPartyID: "B"}: {
+				LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(11)},
+				ECDSAPub:     pub,
+			},
+			{SessionID: "shared-session", LocalPartyID: "C"}: {
+				LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(22)},
+				ECDSAPub:     pub,
+			},
+		},
+		transports: make(map[tssbnbrunner.DKGRunKey]coretransport.FrameTransport),
+		release:    make(chan struct{}),
+	}
+}
+
+func (r *concurrentDKGRunner) RunDKG(ctx context.Context, job tssbnbrunner.DKGJob, transport coretransport.FrameTransport) error {
+	key := tssbnbrunner.DKGRunKey{SessionID: job.SessionID, LocalPartyID: job.LocalPartyID}
+	r.mu.Lock()
+	r.transports[key] = transport
+	r.started++
+	if r.started == 2 {
+		close(r.release)
+	}
+	release := r.release
+	r.mu.Unlock()
+	select {
+	case <-release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (*concurrentDKGRunner) RunSign(context.Context, tssbnbrunner.SignJob, coretransport.FrameTransport) error {
+	return nil
+}
+
+func (*concurrentDKGRunner) ExportECDSASignature(string) (common.SignatureData, error) {
+	return common.SignatureData{}, nil
+}
+
+func (r *concurrentDKGRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	share, ok := r.shares[key]
+	if !ok {
+		return ecdsakeygen.LocalPartySaveData{}, errShareMissing
+	}
+	return share, nil
+}
+
+func (*concurrentDKGRunner) ExportECDSAKeyMaterial(string) (coreshares.ECDSAKeyMaterial, error) {
+	return coreshares.ECDSAKeyMaterial{}, errShareMissing
+}
+
+func (*concurrentDKGRunner) ImportECDSAKeyMaterial(string, coreshares.ECDSAKeyMaterial) {}
+
+func (r *concurrentDKGRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
+	r.mu.Lock()
+	delete(r.shares, key)
+	r.mu.Unlock()
+}
+
+func (*concurrentDKGRunner) ECDSAAddress(string) (string, error) {
+	return "", nil
+}
+
+type identifiedTransport struct {
+	partyID string
+}
+
+func (*identifiedTransport) SendFrame(context.Context, protocol.Frame) error {
+	return nil
+}
+
+func (*identifiedTransport) RecvFrame(context.Context) (protocol.Frame, error) {
+	return protocol.Frame{}, io.EOF
+}
+
+type concurrentShareWriter struct {
+	mu     sync.Mutex
+	inputs map[string]coreshares.SaveShareInput
+}
+
+func (w *concurrentShareWriter) SaveShare(_ context.Context, input coreshares.SaveShareInput) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.inputs[input.LocalPartyID] = coreshares.SaveShareInput{
+		SessionID:                   input.SessionID,
+		KeyID:                       input.KeyID,
+		LocalPartyID:                input.LocalPartyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), input.OpaqueDescriptorFingerprint...),
+		CodecBlob:                   append([]byte(nil), input.CodecBlob...),
+	}
+	return nil
+}
+
+type blockingFirstShareWriter struct {
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+}
+
+func (w *blockingFirstShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
+	w.mu.Lock()
+	w.calls++
+	call := w.calls
+	w.mu.Unlock()
+	if call != 1 {
+		return nil
+	}
+	close(w.entered)
+	<-w.release
+	return nil
+}
+
+func TestDuplicateDKGServiceRejectsSamePartyUntilPersistenceCompletes(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	close(runner.release)
+	runner.started = 2
+	writer := &blockingFirstShareWriter{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := New(runner, newTestLogger(), nil, nil, writer)
+	input := DKGInput{
+		SessionID:    "shared-session",
+		LocalPartyID: "B",
+		KeyID:        "shared-key",
+		Parties:      []string{"B", "C", "remote"},
+		Threshold:    2,
+		Curve:        "secp256k1",
+		Algorithm:    "ecdsa",
+		DerivationMaterial: DKGDerivationMaterial{
+			ChainCode:        strings.Repeat("11", 32),
+			DerivationScheme: "bip32_secp256k1",
+		},
+		MissingPub:  errMissingPublicKey,
+		MissingAddr: errMissingAddress,
+	}
+
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := svc.RunDKGSession(context.Background(), input)
+		firstResult <- err
+	}()
+	<-writer.entered
+
+	if _, err := svc.RunDKGSession(context.Background(), input); !errors.Is(err, ErrDuplicateDKGRun) {
+		t.Fatalf("duplicate error = %v, want ErrDuplicateDKGRun", err)
+	}
+
+	close(writer.release)
+	if err := <-firstResult; err != nil {
+		t.Fatalf("first run failed: %v", err)
+	}
+}
+
+func TestConcurrentDKGServiceIsolatesPartyTransportAndCodecResults(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	writer := &concurrentShareWriter{inputs: make(map[string]coreshares.SaveShareInput)}
+	svc := New(runner, newTestLogger(), nil, nil, writer)
+	chainCode := strings.Repeat("11", 32)
+	bTransport := &identifiedTransport{partyID: "B"}
+	cTransport := &identifiedTransport{partyID: "C"}
+
+	type result struct {
+		output DKGOutput
+		err    error
+	}
+	run := func(partyID string, transport coretransport.FrameTransport) <-chan result {
+		resultCh := make(chan result, 1)
+		go func() {
+			output, err := svc.RunDKGSession(context.Background(), DKGInput{
+				SessionID:    "shared-session",
+				LocalPartyID: partyID,
+				KeyID:        "shared-key",
+				Parties:      []string{"B", "C", "remote"},
+				Threshold:    2,
+				Curve:        "secp256k1",
+				Algorithm:    "ecdsa",
+				DerivationMaterial: DKGDerivationMaterial{
+					ChainCode:        chainCode,
+					DerivationScheme: "bip32_secp256k1",
+				},
+				Transport:   transport,
+				MissingPub:  errMissingPublicKey,
+				MissingAddr: errMissingAddress,
+			})
+			resultCh <- result{output: output, err: err}
+		}()
+		return resultCh
+	}
+
+	bResultCh := run("B", bTransport)
+	cResultCh := run("C", cTransport)
+	bResult := <-bResultCh
+	cResult := <-cResultCh
+	if bResult.err != nil || cResult.err != nil {
+		t.Fatalf("concurrent runs failed: B=%v C=%v", bResult.err, cResult.err)
+	}
+	if bResult.output.PublicKey != cResult.output.PublicKey {
+		t.Fatal("B and C public keys differ")
+	}
+	if bResult.output.ChainCode != chainCode || cResult.output.ChainCode != chainCode {
+		t.Fatal("B and C chain codes differ")
+	}
+
+	bKey := tssbnbrunner.DKGRunKey{SessionID: "shared-session", LocalPartyID: "B"}
+	cKey := tssbnbrunner.DKGRunKey{SessionID: "shared-session", LocalPartyID: "C"}
+	runner.mu.Lock()
+	bSeenTransport := runner.transports[bKey]
+	cSeenTransport := runner.transports[cKey]
+	runner.mu.Unlock()
+	if bSeenTransport != bTransport || cSeenTransport != cTransport {
+		t.Fatal("party-specific transports crossed between DKG runs")
+	}
+
+	writer.mu.Lock()
+	bBlob := append([]byte(nil), writer.inputs["B"].CodecBlob...)
+	cBlob := append([]byte(nil), writer.inputs["C"].CodecBlob...)
+	writer.mu.Unlock()
+	if len(bBlob) == 0 || len(cBlob) == 0 {
+		t.Fatal("missing persisted codec blobs")
+	}
+	if bytes.Equal(bBlob, cBlob) {
+		t.Fatal("B and C codec blobs unexpectedly match")
 	}
 }
 

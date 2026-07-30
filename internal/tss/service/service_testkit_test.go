@@ -36,10 +36,10 @@ type stubRunner struct {
 	signatureExported   bool
 }
 
-func (r *stubRunner) ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
-	r.events = append(r.events, "export:"+key)
-	r.exportedKeys = append(r.exportedKeys, key)
-	share, ok := r.shareByKey[key]
+func (r *stubRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
+	r.events = append(r.events, "export:"+key.SessionID)
+	r.exportedKeys = append(r.exportedKeys, key.SessionID)
+	share, ok := r.shareByKey[key.SessionID]
 	if !ok {
 		return ecdsakeygen.LocalPartySaveData{}, errShareMissing
 	}
@@ -54,10 +54,10 @@ func (r *stubRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMate
 	return coreshares.ECDSAKeyMaterial{}, errShareMissing
 }
 
-func (r *stubRunner) DeleteTemporaryECDSADKGShare(key string) {
-	r.events = append(r.events, "cleanup:"+key)
-	r.deletedKeys = append(r.deletedKeys, key)
-	delete(r.shareByKey, key)
+func (r *stubRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
+	r.events = append(r.events, "cleanup:"+key.SessionID)
+	r.deletedKeys = append(r.deletedKeys, key.SessionID)
+	delete(r.shareByKey, key.SessionID)
 }
 
 func (r *stubRunner) RunDKG(_ context.Context, job tssbnbrunner.DKGJob, _ coretransport.FrameTransport) error {

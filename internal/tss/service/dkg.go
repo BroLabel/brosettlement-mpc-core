@@ -46,7 +46,8 @@ func normalizeDKGMaterial(in DKGInput) (normalizedDKGMaterial, error) {
 }
 
 func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material normalizedDKGMaterial) (DKGOutput, ecdsakeygen.LocalPartySaveData, error) {
-	share, err := runner.ExportTemporaryECDSADKGShare(in.SessionID)
+	runKey := tssbnbrunner.DKGRunKey{SessionID: in.SessionID, LocalPartyID: in.LocalPartyID}
+	share, err := runner.ExportTemporaryECDSADKGShare(runKey)
 	if err != nil {
 		return DKGOutput{}, ecdsakeygen.LocalPartySaveData{}, err
 	}
@@ -71,14 +72,14 @@ func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material norm
 	}, share, nil
 }
 
-func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, runner Runner, sessionID string, job tssbnbrunner.DKGJob, keyID string, opaqueDescriptorFingerprint []byte, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) error {
+func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, runner Runner, runKey tssbnbrunner.DKGRunKey, keyID string, opaqueDescriptorFingerprint []byte, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) error {
 	if shareWriter == nil {
 		return nil
 	}
 	if err := tssruntime.PersistKeyMaterialAfterDKG(ctx, shareWriter, share, tssruntime.DKGPersistInput{
-		SessionID:                   sessionID,
+		SessionID:                   runKey.SessionID,
 		KeyID:                       keyID,
-		LocalPartyID:                job.LocalPartyID,
+		LocalPartyID:                runKey.LocalPartyID,
 		OpaqueDescriptorFingerprint: opaqueDescriptorFingerprint,
 		ChainCode:                   append([]byte(nil), material.ChainCode...),
 		PublicKeyFormat:             corederivation.PublicKeyFormatUncompressedHex,
@@ -86,7 +87,7 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, run
 	}); err != nil {
 		return err
 	}
-	runner.DeleteTemporaryECDSADKGShare(sessionID)
+	runner.DeleteTemporaryECDSADKGShare(runKey)
 	return nil
 }
 

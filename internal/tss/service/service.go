@@ -62,6 +62,28 @@ func (s *Service) StopPreParamsPool() error {
 	return s.preParamsPool.Close()
 }
 
+// PausePreParamsRefill prevents the managed pool from starting new background
+// generation jobs while allowing work already in flight to finish.
+func (s *Service) PausePreParamsRefill() {
+	if s == nil {
+		return
+	}
+	if controller, ok := s.preParamsPool.(RefillController); ok {
+		controller.PauseRefill()
+	}
+}
+
+// ResumePreParamsRefill re-enables asynchronous generation for the managed
+// pool.
+func (s *Service) ResumePreParamsRefill() {
+	if s == nil {
+		return
+	}
+	if controller, ok := s.preParamsPool.(RefillController); ok {
+		controller.ResumeRefill()
+	}
+}
+
 func (s *Service) Snapshot() Snapshot {
 	if s == nil {
 		return Snapshot{}

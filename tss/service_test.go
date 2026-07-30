@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -460,6 +461,68 @@ type sourceStub struct {
 func (s *sourceStub) Acquire(_ context.Context) (*ecdsakeygen.LocalPreParams, error) {
 	s.calls++
 	return s.value, s.err
+}
+
+type refillControlPoolStub struct {
+	sourceStub
+	pauses   int
+	resumes  int
+	snapshot preparams.Snapshot
+}
+
+func (p *refillControlPoolStub) Size() int {
+	return p.snapshot.Size
+}
+
+func (p *refillControlPoolStub) Start(context.Context) error {
+	return nil
+}
+
+func (p *refillControlPoolStub) Close() error {
+	return nil
+}
+
+func (p *refillControlPoolStub) PauseRefill() {
+	p.pauses++
+}
+
+func (p *refillControlPoolStub) ResumeRefill() {
+	p.resumes++
+}
+
+func (p *refillControlPoolStub) Snapshot() preparams.Snapshot {
+	return p.snapshot
+}
+
+func TestServiceExposesGenericPreParamsRefillControlsAndMetrics(t *testing.T) {
+	pool := &refillControlPoolStub{
+		snapshot: preparams.Snapshot{
+			Size:              2,
+			InFlight:          1,
+			RefillPaused:      true,
+			RefillPauseCount:  2,
+			RefillResumeCount: 1,
+		},
+	}
+	runner := newFacadeDerivedRunner(t, "key-1")
+	service := newService(runner, slog.Default(), pool, nil, nil, nil)
+
+	service.PausePreParamsRefill()
+	service.ResumePreParamsRefill()
+
+	if pool.pauses != 1 || pool.resumes != 1 {
+		t.Fatalf("refill control calls = pause:%d resume:%d, want 1:1", pool.pauses, pool.resumes)
+	}
+	want := Snapshot{
+		PreParamsPoolSize:           2,
+		PreParamsGenerationInFlight: 1,
+		PreParamsRefillPaused:       true,
+		PreParamsRefillPauseCount:   2,
+		PreParamsRefillResumeCount:  1,
+	}
+	if got := service.Snapshot(); got != want {
+		t.Fatalf("Snapshot() = %+v, want %+v", got, want)
+	}
 }
 
 func TestNewBnbServiceWithOptionsConfigShareCapabilitiesMetrics(t *testing.T) {

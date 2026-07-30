@@ -4,6 +4,10 @@ import "github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 
 type Snapshot struct {
 	PreParamsPoolSize                  int
+	PreParamsGenerationInFlight        int32
+	PreParamsRefillPaused              bool
+	PreParamsRefillPauseCount          uint64
+	PreParamsRefillResumeCount         uint64
 	PreParamsSyncFallbackCount         uint64
 	PreParamsAcquireWaitNanos          int64
 	PreParamsAcquiredCount             uint64
@@ -29,6 +33,10 @@ func BuildSnapshot(pool Pool, provider SnapshotProvider, handles preparams.Handl
 	}
 	if provider != nil {
 		poolSnapshot := provider.Snapshot()
+		snapshot.PreParamsGenerationInFlight = poolSnapshot.InFlight
+		snapshot.PreParamsRefillPaused = poolSnapshot.RefillPaused
+		snapshot.PreParamsRefillPauseCount = poolSnapshot.RefillPauseCount
+		snapshot.PreParamsRefillResumeCount = poolSnapshot.RefillResumeCount
 		snapshot.PreParamsSyncFallbackCount = poolSnapshot.SyncFallbackCount
 		snapshot.PreParamsAcquireWaitNanos = poolSnapshot.AcquireWaitNanos
 		snapshot.PreParamsAcquiredCount = poolSnapshot.AcquireCount

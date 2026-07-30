@@ -158,15 +158,17 @@ func newPreParamsPool(logger *slog.Logger, opts serviceOptions) preParamsProvide
 		cfg = opts.preParamsConfig
 	}
 	return preparams.NewPool(logger, preparams.Config{
-		Enabled:             cfg.Enabled,
-		TargetSize:          cfg.TargetSize,
-		MaxConcurrency:      cfg.MaxConcurrency,
-		GenerateTimeout:     cfg.GenerateTimeout,
-		AcquireTimeout:      cfg.AcquireTimeout,
-		RetryBackoff:        cfg.RetryBackoff,
-		SyncFallbackOnEmpty: cfg.SyncFallbackOnEmpty,
-		FileCacheEnabled:    cfg.FileCacheEnabled,
-		FileCacheDir:        cfg.FileCacheDir,
+		Enabled:               cfg.Enabled,
+		TargetSize:            cfg.TargetSize,
+		MaxConcurrency:        cfg.MaxConcurrency,
+		GenerationParallelism: cfg.GenerationParallelism,
+		GenerateTimeout:       cfg.GenerateTimeout,
+		AcquireTimeout:        cfg.AcquireTimeout,
+		RetryBackoff:          cfg.RetryBackoff,
+		SyncFallbackOnEmpty:   cfg.SyncFallbackOnEmpty,
+		AutoRefillOnAcquire:   cfg.AutoRefillOnAcquire,
+		FileCacheEnabled:      cfg.FileCacheEnabled,
+		FileCacheDir:          cfg.FileCacheDir,
 	})
 }
 
@@ -182,6 +184,23 @@ func (s *Service) StartPreParamsPool(ctx context.Context) error {
 
 func (s *Service) StopPreParamsPool() error {
 	return s.impl.StopPreParamsPool()
+}
+
+// PausePreParamsRefill prevents new background pre-parameter generation jobs
+// from starting. Generation already in flight is allowed to finish.
+func (s *Service) PausePreParamsRefill() {
+	if s == nil || s.impl == nil {
+		return
+	}
+	s.impl.PausePreParamsRefill()
+}
+
+// ResumePreParamsRefill re-enables asynchronous pre-parameter generation.
+func (s *Service) ResumePreParamsRefill() {
+	if s == nil || s.impl == nil {
+		return
+	}
+	s.impl.ResumePreParamsRefill()
 }
 
 func (s *Service) Snapshot() Snapshot {

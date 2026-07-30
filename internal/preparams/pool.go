@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +33,9 @@ type Snapshot struct {
 	PoolEmptyCount     uint64
 	SyncFallbackCount  uint64
 	LastGenerateNanos  int64
+	RefillPaused       bool
+	RefillPauseCount   uint64
+	RefillResumeCount  uint64
 }
 
 type item struct {
@@ -47,9 +49,10 @@ type Pool struct {
 
 	ch chan item
 
-	gen      Generator
-	validate Validator
-	fs       cacheFS
+	gen               Generator
+	validate          Validator
+	fs                cacheFS
+	generatePreParams func(context.Context, int) (*ecdsakeygen.LocalPreParams, error)
 
 	runCtx context.Context
 	cancel context.CancelFunc
@@ -60,8 +63,10 @@ type Pool struct {
 	wg        sync.WaitGroup
 
 	refillCh chan struct{}
+	refillMu sync.Mutex
 
-	closed atomic.Bool
+	closed       atomic.Bool
+	refillPaused atomic.Bool
 
 	inFlight          atomic.Int32
 	generationsOK     atomic.Uint64
@@ -72,6 +77,8 @@ type Pool struct {
 	poolEmpty         atomic.Uint64
 	syncFallback      atomic.Uint64
 	lastGenerateNanos atomic.Int64
+	refillPauses      atomic.Uint64
+	refillResumes     atomic.Uint64
 }
 
 func NewPool(logger *slog.Logger, cfg Config) *Pool {
@@ -86,6 +93,9 @@ func NewPool(logger *slog.Logger, cfg Config) *Pool {
 	}
 	if cfg.MaxConcurrency > cfg.TargetSize {
 		cfg.MaxConcurrency = cfg.TargetSize
+	}
+	if cfg.GenerationParallelism < 1 {
+		cfg.GenerationParallelism = 2
 	}
 	if cfg.GenerateTimeout <= 0 {
 		cfg.GenerateTimeout = 7 * time.Minute
@@ -106,6 +116,9 @@ func NewPool(logger *slog.Logger, cfg Config) *Pool {
 		ch:       make(chan item, cfg.TargetSize),
 		refillCh: make(chan struct{}, 1),
 		fs:       newOSCacheFS(),
+		generatePreParams: func(ctx context.Context, parallelism int) (*ecdsakeygen.LocalPreParams, error) {
+			return ecdsakeygen.GeneratePreParamsWithContext(ctx, parallelism)
+		},
 	}
 	p.gen = p.defaultGenerator
 	p.validate = func(params *ecdsakeygen.LocalPreParams) bool {
@@ -153,9 +166,11 @@ func (p *Pool) Start(ctx context.Context) error {
 		p.logger.Info("preparams pool started",
 			"target_size", p.cfg.TargetSize,
 			"max_concurrency", p.cfg.MaxConcurrency,
+			"generation_parallelism", p.cfg.GenerationParallelism,
 			"generate_timeout", p.cfg.GenerateTimeout,
 			"acquire_timeout", p.cfg.AcquireTimeout,
 			"sync_fallback_on_empty", p.cfg.SyncFallbackOnEmpty,
+			"auto_refill_on_acquire", p.cfg.AutoRefillOnAcquire,
 		)
 		p.wg.Add(1)
 		go p.refillLoop()
@@ -202,7 +217,9 @@ func (p *Pool) Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 		return p.finishSynchronousAcquire(p.syncGenerate(ctx))
 	case it := <-p.ch:
 		p.acquireWaitNanos.Add(durationToNanos(time.Since(started)))
-		defer p.signalRefill()
+		if p.cfg.AutoRefillOnAcquire {
+			defer p.signalRefill()
+		}
 		if !p.validate(it.params) {
 			return p.failAcquire(ErrInvalidCachedPreParams)
 		}
@@ -248,6 +265,33 @@ func (p *Pool) Snapshot() Snapshot {
 		PoolEmptyCount:     p.poolEmpty.Load(),
 		SyncFallbackCount:  p.syncFallback.Load(),
 		LastGenerateNanos:  p.lastGenerateNanos.Load(),
+		RefillPaused:       p.refillPaused.Load(),
+		RefillPauseCount:   p.refillPauses.Load(),
+		RefillResumeCount:  p.refillResumes.Load(),
+	}
+}
+
+// PauseRefill prevents new background generation jobs from starting. Generation
+// jobs that were already in flight continue to completion.
+func (p *Pool) PauseRefill() {
+	p.refillMu.Lock()
+	defer p.refillMu.Unlock()
+	if p.refillPaused.CompareAndSwap(false, true) {
+		p.refillPauses.Add(1)
+	}
+}
+
+// ResumeRefill re-enables background generation and asynchronously fills any
+// inventory deficit. Repeated calls have no effect.
+func (p *Pool) ResumeRefill() {
+	p.refillMu.Lock()
+	resumed := p.refillPaused.CompareAndSwap(true, false)
+	if resumed {
+		p.refillResumes.Add(1)
+	}
+	p.refillMu.Unlock()
+	if resumed {
+		p.signalRefill()
 	}
 }
 
@@ -264,23 +308,23 @@ func (p *Pool) Close() error {
 
 func (p *Pool) refillLoop() {
 	defer p.wg.Done()
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
 
 	for {
 		p.ensureRefillWorkers()
 		select {
 		case <-p.runCtx.Done():
 			return
-		case <-t.C:
 		case <-p.refillCh:
 		}
 	}
 }
 
 func (p *Pool) ensureRefillWorkers() {
+	p.refillMu.Lock()
+	defer p.refillMu.Unlock()
+
 	for {
-		if p.closed.Load() {
+		if p.closed.Load() || p.refillPaused.Load() {
 			return
 		}
 		inFlight := int(p.inFlight.Load())
@@ -379,11 +423,7 @@ func (p *Pool) defaultGenerator(parent context.Context) (*ecdsakeygen.LocalPrePa
 	}
 	defer cancel()
 
-	concurrency := runtime.GOMAXPROCS(0)
-	if concurrency < 2 {
-		concurrency = 2
-	}
-	return ecdsakeygen.GeneratePreParamsWithContext(ctx, concurrency)
+	return p.generatePreParams(ctx, p.cfg.GenerationParallelism)
 }
 
 func (p *Pool) waitBackoff() {

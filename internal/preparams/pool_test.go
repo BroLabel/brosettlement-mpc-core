@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -110,7 +111,10 @@ func TestPoolRefillAfterConsume(t *testing.T) {
 	if err := pool.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
-	waitFor(t, 500*time.Millisecond, func() bool { return pool.Size() == 1 })
+	waitFor(t, 500*time.Millisecond, func() bool {
+		snapshot := pool.Snapshot()
+		return snapshot.Size == 1 && snapshot.InFlight == 0
+	})
 
 	_, err := pool.Acquire(context.Background())
 	if err != nil {
@@ -119,6 +123,216 @@ func TestPoolRefillAfterConsume(t *testing.T) {
 	waitFor(t, 500*time.Millisecond, func() bool { return pool.Size() == 1 })
 	if generated.Load() < 2 {
 		t.Fatalf("expected refill generation, got %d", generated.Load())
+	}
+}
+
+func TestPoolGenerationParallelismIsExplicitAndSupportsOne(t *testing.T) {
+	originalGOMAXPROCS := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() {
+		runtime.GOMAXPROCS(originalGOMAXPROCS)
+	})
+
+	cfg := DefaultConfig()
+	cfg.GenerationParallelism = 1
+	pool := NewPool(testLogger(), cfg)
+
+	var gotParallelism atomic.Int32
+	pool.generatePreParams = func(_ context.Context, parallelism int) (*ecdsakeygen.LocalPreParams, error) {
+		gotParallelism.Store(int32(parallelism))
+		return &ecdsakeygen.LocalPreParams{}, nil
+	}
+
+	if _, err := pool.defaultGenerator(context.Background()); err != nil {
+		t.Fatalf("defaultGenerator() error = %v", err)
+	}
+	if got := gotParallelism.Load(); got != 1 {
+		t.Fatalf("generation parallelism = %d, want explicit value 1", got)
+	}
+}
+
+func TestPoolGenerationParallelismDoesNotFollowGOMAXPROCS(t *testing.T) {
+	originalGOMAXPROCS := runtime.GOMAXPROCS(8)
+	t.Cleanup(func() {
+		runtime.GOMAXPROCS(originalGOMAXPROCS)
+	})
+
+	cfg := DefaultConfig()
+	cfg.GenerationParallelism = 3
+	pool := NewPool(testLogger(), cfg)
+
+	var gotParallelism atomic.Int32
+	pool.generatePreParams = func(_ context.Context, parallelism int) (*ecdsakeygen.LocalPreParams, error) {
+		gotParallelism.Store(int32(parallelism))
+		return &ecdsakeygen.LocalPreParams{}, nil
+	}
+
+	if _, err := pool.defaultGenerator(context.Background()); err != nil {
+		t.Fatalf("defaultGenerator() error = %v", err)
+	}
+	if got := gotParallelism.Load(); got != 3 {
+		t.Fatalf("generation parallelism = %d, want configured value 3", got)
+	}
+}
+
+func TestPoolAcquireDoesNotTriggerRefillWhenDisabled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 1
+	cfg.MaxConcurrency = 1
+	cfg.AutoRefillOnAcquire = false
+	cfg.SyncFallbackOnEmpty = false
+
+	var calls atomic.Int32
+	unexpectedRefill := make(chan struct{}, 1)
+	pool := newPoolForTest(testLogger(), cfg,
+		func(ctx context.Context) (*ecdsakeygen.LocalPreParams, error) {
+			if calls.Add(1) > 1 {
+				unexpectedRefill <- struct{}{}
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return &ecdsakeygen.LocalPreParams{}, nil
+		},
+		func(params *ecdsakeygen.LocalPreParams) bool { return params != nil },
+	)
+	defer func() { _ = pool.Close() }()
+
+	if err := pool.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitFor(t, 500*time.Millisecond, func() bool { return pool.Size() == 1 })
+	if _, err := pool.Acquire(context.Background()); err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+
+	select {
+	case <-unexpectedRefill:
+		t.Fatal("Acquire() started a refill while AutoRefillOnAcquire was disabled")
+	case <-time.After(2200 * time.Millisecond):
+	}
+	if snapshot := pool.Snapshot(); snapshot.InFlight != 0 || snapshot.GenerationsSuccess != 1 {
+		t.Fatalf("snapshot after acquire = %+v, want no refill transition", snapshot)
+	}
+}
+
+func TestPoolRefillPauseDuringTwoActiveRuntimesAndIdempotentResume(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 2
+	cfg.MaxConcurrency = 1
+	cfg.AutoRefillOnAcquire = false
+	cfg.SyncFallbackOnEmpty = false
+
+	var calls atomic.Int32
+	pool := newPoolForTest(testLogger(), cfg,
+		func(context.Context) (*ecdsakeygen.LocalPreParams, error) {
+			calls.Add(1)
+			return &ecdsakeygen.LocalPreParams{}, nil
+		},
+		func(params *ecdsakeygen.LocalPreParams) bool { return params != nil },
+	)
+	defer func() { _ = pool.Close() }()
+
+	if err := pool.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitFor(t, 500*time.Millisecond, func() bool {
+		snapshot := pool.Snapshot()
+		return snapshot.Size == 2 && snapshot.InFlight == 0
+	})
+
+	const pauses = 16
+	var pauseWG sync.WaitGroup
+	pauseWG.Add(pauses)
+	for i := 0; i < pauses; i++ {
+		go func() {
+			defer pauseWG.Done()
+			pool.PauseRefill()
+		}()
+	}
+	pauseWG.Wait()
+	if _, err := pool.Acquire(context.Background()); err != nil {
+		t.Fatalf("Acquire() B error = %v", err)
+	}
+	if _, err := pool.Acquire(context.Background()); err != nil {
+		t.Fatalf("Acquire() C error = %v", err)
+	}
+	pool.signalRefill()
+
+	select {
+	case <-time.After(100 * time.Millisecond):
+		if got := calls.Load(); got != 2 {
+			t.Fatalf("generation calls while two runtimes active = %d, want 2", got)
+		}
+	}
+	paused := pool.Snapshot()
+	if !paused.RefillPaused || paused.RefillPauseCount != 1 || paused.RefillResumeCount != 0 {
+		t.Fatalf("paused refill metrics = %+v, want one pause transition", paused)
+	}
+	if paused.Size != 0 || paused.InFlight != 0 || paused.GenerationsSuccess != 2 {
+		t.Fatalf("paused generation metrics = %+v, want empty idle pool", paused)
+	}
+
+	const resumes = 16
+	var wg sync.WaitGroup
+	wg.Add(resumes)
+	for i := 0; i < resumes; i++ {
+		go func() {
+			defer wg.Done()
+			pool.ResumeRefill()
+		}()
+	}
+	wg.Wait()
+	waitFor(t, 500*time.Millisecond, func() bool {
+		snapshot := pool.Snapshot()
+		return snapshot.Size == 2 && snapshot.InFlight == 0
+	})
+
+	resumed := pool.Snapshot()
+	if resumed.RefillPaused || resumed.RefillPauseCount != 1 || resumed.RefillResumeCount != 1 {
+		t.Fatalf("resumed refill metrics = %+v, want one resume transition", resumed)
+	}
+	if resumed.GenerationsSuccess != 4 || calls.Load() != 4 {
+		t.Fatalf("generation transitions after resume = success:%d calls:%d, want 4:4",
+			resumed.GenerationsSuccess, calls.Load())
+	}
+}
+
+func TestPoolPauseRefillAllowsExistingGenerationToFinish(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 2
+	cfg.MaxConcurrency = 1
+
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	pool := newPoolForTest(testLogger(), cfg,
+		func(context.Context) (*ecdsakeygen.LocalPreParams, error) {
+			if calls.Add(1) == 1 {
+				close(started)
+				<-release
+			}
+			return &ecdsakeygen.LocalPreParams{}, nil
+		},
+		func(params *ecdsakeygen.LocalPreParams) bool { return params != nil },
+	)
+	defer func() { _ = pool.Close() }()
+
+	if err := pool.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	<-started
+	pool.PauseRefill()
+	close(release)
+
+	waitFor(t, 500*time.Millisecond, func() bool {
+		snapshot := pool.Snapshot()
+		return snapshot.Size == 1 && snapshot.InFlight == 0
+	})
+	snapshot := pool.Snapshot()
+	if !snapshot.RefillPaused || snapshot.GenerationsSuccess != 1 || snapshot.GenerationsFailed != 0 {
+		t.Fatalf("snapshot after in-flight completion = %+v", snapshot)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("generation calls after pausing an in-flight fill = %d, want 1", got)
 	}
 }
 

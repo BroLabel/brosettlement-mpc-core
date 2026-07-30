@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -144,6 +145,35 @@ func (*identifiedTransport) RecvFrame(context.Context) (protocol.Frame, error) {
 type concurrentShareWriter struct {
 	mu     sync.Mutex
 	inputs map[string]coreshares.SaveShareInput
+}
+
+type sequentialPreParamsSource struct {
+	mu       sync.Mutex
+	values   []*ecdsakeygen.LocalPreParams
+	acquires int
+}
+
+func (s *sequentialPreParamsSource) Acquire(context.Context) (*ecdsakeygen.LocalPreParams, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.acquires >= len(s.values) {
+		return nil, errors.New("preparams source exhausted")
+	}
+	value := s.values[s.acquires]
+	s.acquires++
+	return value, nil
+}
+
+type consumeObservingRunner struct {
+	*stubRunner
+	handle     *preparams.Handle
+	discardErr error
+	runErr     error
+}
+
+func (r *consumeObservingRunner) RunDKG(context.Context, tssbnbrunner.DKGJob, coretransport.FrameTransport) error {
+	r.discardErr = r.handle.Discard()
+	return r.runErr
 }
 
 func (w *concurrentShareWriter) SaveShare(_ context.Context, input coreshares.SaveShareInput) error {
@@ -290,6 +320,165 @@ func TestConcurrentDKGServiceIsolatesPartyTransportAndCodecResults(t *testing.T)
 	}
 	if bytes.Equal(bBlob, cBlob) {
 		t.Fatal("B and C codec blobs unexpectedly match")
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsInvalidHandleBeforeRunner(t *testing.T) {
+	runner := newECDSASecp256k1StubRunner(t, "session-1")
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil, nil)
+
+	for name, handle := range map[string]*preparams.Handle{
+		"nil":    nil,
+		"forged": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle)
+			if !errors.Is(err, preparams.ErrInvalidPreParamsHandle) {
+				t.Fatalf("error = %v, want ErrInvalidPreParamsHandle", err)
+			}
+			if runner.lastDKGJob.SessionID != "" {
+				t.Fatal("runner started for an invalid handle")
+			}
+		})
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsForeignServiceBeforeRunner(t *testing.T) {
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
+	ownerRunner := newECDSASecp256k1StubRunner(t, "session-1")
+	foreignRunner := newECDSASecp256k1StubRunner(t, "session-1")
+	owner := New(ownerRunner, newTestLogger(), nil, nil, nil, source)
+	foreign := New(foreignRunner, newTestLogger(), nil, nil, nil, source)
+
+	handle, err := owner.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("acquire handle failed: %v", err)
+	}
+	if _, err := foreign.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle); !errors.Is(err, preparams.ErrForeignPreParamsHandle) {
+		t.Fatalf("foreign run error = %v, want ErrForeignPreParamsHandle", err)
+	}
+	if foreignRunner.lastDKGJob.SessionID != "" {
+		t.Fatal("foreign service started runner")
+	}
+	if err := handle.Discard(); err != nil {
+		t.Fatalf("owner handle was changed by foreign attempt: %v", err)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsConsumesBeforeRunnerAndBurnsOnError(t *testing.T) {
+	runErr := errors.New("runner stopped")
+	runner := &consumeObservingRunner{
+		stubRunner: newECDSASecp256k1StubRunner(t, "session-1"),
+		runErr:     runErr,
+	}
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
+	svc := New(runner, newTestLogger(), nil, nil, nil, source)
+	handle, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("acquire handle failed: %v", err)
+	}
+	runner.handle = handle
+
+	_, err = svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{
+		SessionID:          "session-1",
+		KeyID:              "session-1",
+		LocalPartyID:       "B",
+		Parties:            []string{"A", "B", "C"},
+		Threshold:          2,
+		Algorithm:          "ecdsa",
+		DerivationMaterial: validDKGMaterial(),
+		MissingPub:         errMissingPublicKey,
+		MissingAddr:        errMissingAddress,
+	}, handle)
+	if !errors.Is(err, runErr) {
+		t.Fatalf("run error = %v, want runner error", err)
+	}
+	if !errors.Is(runner.discardErr, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("discard at runner entry = %v, want ErrPreParamsConsumed", runner.discardErr)
+	}
+	if _, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle); !errors.Is(err, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("reuse after runner failure error = %v, want ErrPreParamsConsumed", err)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsDiscardedHandleBeforeRunner(t *testing.T) {
+	runner := newECDSASecp256k1StubRunner(t, "session-1")
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
+	svc := New(runner, newTestLogger(), nil, nil, nil, source)
+	handle, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("acquire handle failed: %v", err)
+	}
+	if err := handle.Discard(); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	if _, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle); !errors.Is(err, preparams.ErrPreParamsDiscarded) {
+		t.Fatalf("run error = %v, want ErrPreParamsDiscarded", err)
+	}
+	if runner.lastDKGJob.SessionID != "" {
+		t.Fatal("runner started for discarded handle")
+	}
+}
+
+func TestRunDKGSessionWithPreParamsConsumesIndependentHandlesForBAndC(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	writer := &concurrentShareWriter{inputs: make(map[string]coreshares.SaveShareInput)}
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}, {}}}
+	svc := New(runner, newTestLogger(), nil, nil, writer, source)
+
+	first, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	second, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("second acquire failed: %v", err)
+	}
+
+	type result struct {
+		output DKGOutput
+		err    error
+	}
+	run := func(partyID string, handle *preparams.Handle) <-chan result {
+		resultCh := make(chan result, 1)
+		go func() {
+			output, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{
+				SessionID:    "shared-session",
+				LocalPartyID: partyID,
+				KeyID:        "shared-key",
+				Parties:      []string{"A", "B", "C"},
+				Threshold:    2,
+				Curve:        "secp256k1",
+				Algorithm:    "ecdsa",
+				DerivationMaterial: DKGDerivationMaterial{
+					ChainCode:        strings.Repeat("11", 32),
+					DerivationScheme: "bip32_secp256k1",
+				},
+				Transport:   &identifiedTransport{partyID: partyID},
+				MissingPub:  errMissingPublicKey,
+				MissingAddr: errMissingAddress,
+			}, handle)
+			resultCh <- result{output: output, err: err}
+		}()
+		return resultCh
+	}
+
+	bResultCh := run("B", second)
+	cResultCh := run("C", first)
+	bResult := <-bResultCh
+	cResult := <-cResultCh
+	if bResult.err != nil || cResult.err != nil {
+		t.Fatalf("concurrent handle runs failed: B=%v C=%v", bResult.err, cResult.err)
+	}
+	if bResult.output.PublicKey != cResult.output.PublicKey {
+		t.Fatal("B and C public keys differ")
+	}
+	if err := first.Discard(); !errors.Is(err, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("first handle terminal state = %v, want ErrPreParamsConsumed", err)
+	}
+	if err := second.Discard(); !errors.Is(err, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("second handle terminal state = %v, want ErrPreParamsConsumed", err)
 	}
 }
 

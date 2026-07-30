@@ -241,6 +241,7 @@ func validFacadeDerivationContext() DerivationContext {
 
 type facadeDerivedRunner struct {
 	materialByKey map[string]coreshares.ECDSAKeyMaterial
+	lastDKGJob    tssbnbrunner.DKGJob
 	lastSignJob   tssbnbrunner.SignJob
 }
 
@@ -267,7 +268,8 @@ func newFacadeDerivedRunner(t *testing.T, keyID string) *facadeDerivedRunner {
 	}
 }
 
-func (r *facadeDerivedRunner) RunDKG(context.Context, tssbnbrunner.DKGJob, tssbnbrunner.Transport) error {
+func (r *facadeDerivedRunner) RunDKG(_ context.Context, job tssbnbrunner.DKGJob, _ tssbnbrunner.Transport) error {
+	r.lastDKGJob = job
 	return nil
 }
 
@@ -332,6 +334,87 @@ func TestServiceDoesNotExposeShareOnlyAPI(t *testing.T) {
 		if _, ok := serviceType.MethodByName(name); ok {
 			t.Fatalf("Service still exposes share-only method %s", name)
 		}
+	}
+}
+
+type forgedDKGPreParamsHandle struct{}
+
+func (forgedDKGPreParamsHandle) Discard() error      { return nil }
+func (forgedDKGPreParamsHandle) dkgPreParamsHandle() {}
+
+func TestDKGPreParamsHandleExposesOnlyDiscardToCallers(t *testing.T) {
+	handleType := reflect.TypeOf((*DKGPreParamsHandle)(nil)).Elem()
+	var exported []string
+	for i := 0; i < handleType.NumMethod(); i++ {
+		method := handleType.Method(i)
+		if method.PkgPath == "" {
+			exported = append(exported, method.Name)
+		}
+	}
+	if !reflect.DeepEqual(exported, []string{"Discard"}) {
+		t.Fatalf("exported handle methods = %v, want only Discard", exported)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsInvalidAndForeignPublicHandles(t *testing.T) {
+	request := validDKGRequestWithMaterial()
+	sourceA := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+	sourceB := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+	runnerA := newFacadeDerivedRunner(t, request.Session.KeyID)
+	runnerB := newFacadeDerivedRunner(t, request.Session.KeyID)
+	serviceA := newService(runnerA, slog.Default(), nil, nil, nil, sourceA)
+	serviceB := newService(runnerB, slog.Default(), nil, nil, nil, sourceB)
+
+	owned, err := serviceA.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireDKGPreParams failed: %v", err)
+	}
+	var typedNil *dkgPreParamsHandle
+	for name, handle := range map[string]DKGPreParamsHandle{
+		"nil":       nil,
+		"typed nil": typedNil,
+		"forged":    forgedDKGPreParamsHandle{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := serviceA.RunDKGSessionWithPreParams(context.Background(), request, handle); !errors.Is(err, ErrInvalidPreParamsHandle) {
+				t.Fatalf("error = %v, want ErrInvalidPreParamsHandle", err)
+			}
+			if runnerA.lastDKGJob.SessionID != "" {
+				t.Fatal("runner started for invalid public handle")
+			}
+		})
+	}
+
+	if _, err := serviceB.RunDKGSessionWithPreParams(context.Background(), request, owned); !errors.Is(err, ErrForeignPreParamsHandle) {
+		t.Fatalf("foreign service error = %v, want ErrForeignPreParamsHandle", err)
+	}
+	if runnerB.lastDKGJob.SessionID != "" {
+		t.Fatal("foreign service started runner")
+	}
+	if err := owned.Discard(); err != nil {
+		t.Fatalf("foreign attempt changed owned handle: %v", err)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsConsumesPublicHandle(t *testing.T) {
+	request := validDKGRequestWithMaterial()
+	material := &ecdsakeygen.LocalPreParams{}
+	source := &sourceStub{value: material}
+	runner := newFacadeDerivedRunner(t, request.Session.KeyID)
+	service := newService(runner, slog.Default(), nil, nil, nil, source)
+
+	handle, err := service.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireDKGPreParams failed: %v", err)
+	}
+	if _, err := service.RunDKGSessionWithPreParams(context.Background(), request, handle); !errors.Is(err, ErrShareNotFound) {
+		t.Fatalf("RunDKGSessionWithPreParams error = %v, want downstream share error", err)
+	}
+	if runner.lastDKGJob.ECDSAPreParams != material {
+		t.Fatal("runner did not receive consumed preparams")
+	}
+	if err := handle.Discard(); !errors.Is(err, ErrPreParamsConsumed) {
+		t.Fatalf("discard after run error = %v, want ErrPreParamsConsumed", err)
 	}
 }
 

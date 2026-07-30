@@ -192,6 +192,29 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 	if err := req.Validate(); err != nil {
 		return DKGOutput{}, err
 	}
+	return s.impl.RunDKGSession(ctx, buildDKGInput(req))
+}
+
+func (s *Service) AcquireDKGPreParams(ctx context.Context) (DKGPreParamsHandle, error) {
+	handle, err := s.impl.AcquireDKGPreParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &dkgPreParamsHandle{handle: handle}, nil
+}
+
+func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, req DKGSessionRequest, handle DKGPreParamsHandle) (DKGOutput, error) {
+	if err := req.Validate(); err != nil {
+		return DKGOutput{}, err
+	}
+	internalHandle, err := unwrapDKGPreParamsHandle(handle)
+	if err != nil {
+		return DKGOutput{}, err
+	}
+	return s.impl.RunDKGSessionWithPreParams(ctx, buildDKGInput(req), internalHandle)
+}
+
+func buildDKGInput(req DKGSessionRequest) tssservice.DKGInput {
 	var material tssservice.DKGDerivationMaterial
 	if req.DerivationMaterial != nil {
 		material = tssservice.DKGDerivationMaterial{
@@ -199,7 +222,7 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 			DerivationScheme: req.DerivationMaterial.DerivationScheme,
 		}
 	}
-	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
+	return tssservice.DKGInput{
 		SessionID:                   req.Session.SessionID,
 		LocalPartyID:                req.LocalPartyID,
 		OrgID:                       req.Session.OrgID,
@@ -214,7 +237,7 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 		EmptyKeyErr:                 ErrKeyIDRequired,
 		MissingPub:                  ErrMissingDKGPublicKey,
 		MissingAddr:                 ErrMissingDKGAddress,
-	})
+	}
 }
 
 func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) error {

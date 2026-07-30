@@ -2,26 +2,30 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 	tsslogging "github.com/BroLabel/brosettlement-mpc-core/internal/tss/logging"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	"github.com/bnb-chain/tss-lib/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	"log/slog"
 )
 
 type Service struct {
-	dkgMu           sync.Mutex
-	activeDKGRuns   map[tssbnbrunner.DKGRunKey]struct{}
-	runner          Runner
-	logger          *slog.Logger
-	preParamsPool   LifecyclePool
-	preParamsSource PreParamsPool
-	shareReader     ShareReader
-	shareWriter     ShareWriter
+	dkgMu            sync.Mutex
+	activeDKGRuns    map[tssbnbrunner.DKGRunKey]struct{}
+	runner           Runner
+	logger           *slog.Logger
+	preParamsPool    LifecyclePool
+	preParamsSource  PreParamsPool
+	preParamsBinding *preparams.ServiceBinding
+	shareReader      ShareReader
+	shareWriter      ShareWriter
 }
 
 func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareReader ShareReader, shareWriter ShareWriter, externalSource ...PreParamsPool) *Service {
@@ -33,13 +37,14 @@ func New(r Runner, logger *slog.Logger, pool LifecyclePool, shareReader ShareRea
 		source = externalSource[0]
 	}
 	return &Service{
-		activeDKGRuns:   make(map[tssbnbrunner.DKGRunKey]struct{}),
-		runner:          r,
-		logger:          logger,
-		preParamsPool:   pool,
-		preParamsSource: source,
-		shareReader:     shareReader,
-		shareWriter:     shareWriter,
+		activeDKGRuns:    make(map[tssbnbrunner.DKGRunKey]struct{}),
+		runner:           r,
+		logger:           logger,
+		preParamsPool:    pool,
+		preParamsSource:  source,
+		preParamsBinding: preparams.NewServiceBinding(),
+		shareReader:      shareReader,
+		shareWriter:      shareWriter,
 	}
 }
 
@@ -69,6 +74,34 @@ func (s *Service) Snapshot() Snapshot {
 }
 
 func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, error) {
+	return s.runDKGSession(ctx, in, nil, false)
+}
+
+func (s *Service) AcquireDKGPreParams(ctx context.Context) (*preparams.Handle, error) {
+	source := ResolvePreParamsSource(s.preParamsSource, s.preParamsPool)
+	if source == nil {
+		return nil, errors.New("dkg preparams source is unavailable")
+	}
+	material, err := source.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	handle := preparams.NewHandle(s.preParamsBinding, material)
+	if handle == nil {
+		return nil, preparams.ErrInvalidPreParamsHandle
+	}
+	return handle, nil
+}
+
+func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, in DKGInput, handle *preparams.Handle) (DKGOutput, error) {
+	material, err := preparams.Consume(s.preParamsBinding, handle)
+	if err != nil {
+		return DKGOutput{}, err
+	}
+	return s.runDKGSession(ctx, in, material, true)
+}
+
+func (s *Service) runDKGSession(ctx context.Context, in DKGInput, suppliedPreParams *ecdsakeygen.LocalPreParams, hasSuppliedPreParams bool) (DKGOutput, error) {
 	job := buildDKGJob(in)
 	runKey := tssbnbrunner.DKGRunKey{SessionID: job.SessionID, LocalPartyID: job.LocalPartyID}
 	if !s.beginDKGRun(runKey) {
@@ -91,10 +124,16 @@ func (s *Service) RunDKGSession(ctx context.Context, in DKGInput) (DKGOutput, er
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-	err = AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, tssutils.IsECDSA(job.Algorithm))
-	if err != nil {
-		logEnd(err)
-		return DKGOutput{}, err
+	if tssutils.IsECDSA(job.Algorithm) {
+		if hasSuppliedPreParams {
+			job.ECDSAPreParams = suppliedPreParams
+		} else {
+			err = AttachPreParams(ctx, ResolvePreParamsSource(s.preParamsSource, s.preParamsPool), &job, true)
+			if err != nil {
+				logEnd(err)
+				return DKGOutput{}, err
+			}
+		}
 	}
 	if err = s.runner.RunDKG(ctx, job, in.Transport); err != nil {
 		logEnd(err)

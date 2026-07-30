@@ -15,7 +15,7 @@ import (
 func BuildParams(
 	parties []string,
 	localPartyID string,
-	threshold int,
+	requiredSignerCount int,
 	curve string,
 	algorithm string,
 ) (*tsslib.Parameters, map[string]*tsslib.PartyID, *tsslib.PartyID, error) {
@@ -23,7 +23,7 @@ func BuildParams(
 		return nil, nil, nil, errors.New("tss requires at least 2 parties")
 	}
 
-	tssThreshold, err := ToTSSLibThreshold(threshold, len(parties))
+	tssThreshold, err := toTSSLibThreshold(requiredSignerCount, len(parties))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -55,11 +55,11 @@ func BuildParams(
 	return params, partyMap, local, nil
 }
 
-func ToTSSLibThreshold(requiredThreshold, partiesCount int) (int, error) {
-	if requiredThreshold < 2 || requiredThreshold > partiesCount {
-		return 0, fmt.Errorf("invalid required threshold %d for %d parties", requiredThreshold, partiesCount)
+func toTSSLibThreshold(requiredSignerCount, partyCount int) (int, error) {
+	if requiredSignerCount < 2 || requiredSignerCount > partyCount {
+		return 0, fmt.Errorf("invalid required signer count %d for %d parties", requiredSignerCount, partyCount)
 	}
-	return requiredThreshold - 1, nil
+	return requiredSignerCount - 1, nil
 }
 
 func pickLocalPartyID(sortedParties []string, partyMap map[string]*tsslib.PartyID, requested string) *tsslib.PartyID {

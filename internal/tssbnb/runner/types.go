@@ -10,6 +10,12 @@ import (
 // Transport bridges TSS runtime with relay frame transport.
 type Transport = coretransport.FrameTransport
 
+// DKGRunKey identifies one service-local party execution within a wire session.
+type DKGRunKey struct {
+	SessionID    string
+	LocalPartyID string
+}
+
 // DKGJob describes a single DKG execution request.
 type DKGJob struct {
 	SessionID    string

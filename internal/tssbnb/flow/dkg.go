@@ -103,7 +103,11 @@ func RunDKG(ctx context.Context, in DKGRunInput) error {
 	if in.Metrics != nil {
 		in.Metrics.IncSessionsStarted("dkg")
 	}
-	tssThreshold, thresholdErr := tssbnbutils.ToTSSLibThreshold(int(job.Threshold), len(job.Parties))
+	if job.ECDSAPreParams != nil {
+		_ = job.ECDSAPreParams.ValidateWithProof()
+	}
+	execStarted := time.Now()
+	exec, tssThreshold, err := newDKGExecution(job, logger, in.Debug, correlationID, in.Config, in.Metrics)
 	logDebug(in.Debug, logger, "tss runner run dkg start",
 		"correlation_id", correlationID,
 		"session_id", job.SessionID,
@@ -111,17 +115,10 @@ func RunDKG(ctx context.Context, in DKGRunInput) error {
 		"parties", strings.Join(job.Parties, ","),
 		"threshold_m", job.Threshold,
 		"threshold_t", tssThreshold,
-		"threshold_err", thresholdErr,
 		"preparams_provided", job.ECDSAPreParams != nil,
 		"deadline_remaining", tssbnbutils.DeadlineRemaining(ctx),
 		"tss_err_ch_available", false,
 	)
-	if job.ECDSAPreParams != nil {
-		_ = job.ECDSAPreParams.ValidateWithProof()
-	}
-
-	execStarted := time.Now()
-	exec, err := newDKGExecution(job, logger, in.Debug, correlationID, in.Config, in.Metrics)
 	if err != nil {
 		logDebug(in.Debug, logger, "tss runner run dkg done",
 			"correlation_id", correlationID,
@@ -164,10 +161,10 @@ func RunDKG(ctx context.Context, in DKGRunInput) error {
 	return err
 }
 
-func newDKGExecution(job DKGRunJob, logger *slog.Logger, debug bool, correlationID string, cfg tssbnbutils.RunnerConfig, metrics DKGRunMetrics) (*execution.ProtocolExecution, error) {
+func newDKGExecution(job DKGRunJob, logger *slog.Logger, debug bool, correlationID string, cfg tssbnbutils.RunnerConfig, metrics DKGRunMetrics) (*execution.ProtocolExecution, int, error) {
 	params, partyIDs, _, err := tssbnbutils.BuildParams(job.Parties, job.LocalPartyID, int(job.Threshold), job.Curve, job.Algorithm)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	outCh := make(chan tsslib.Message, len(job.Parties)*8)
 	built, err := BuildDKG(DKGBuildInput{
@@ -177,7 +174,7 @@ func newDKGExecution(job DKGRunJob, logger *slog.Logger, debug bool, correlation
 		PreParams: job.ECDSAPreParams,
 	})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	return execution.New(execution.Params{
 		SessionID:     job.SessionID,
@@ -194,7 +191,7 @@ func newDKGExecution(job DKGRunJob, logger *slog.Logger, debug bool, correlation
 		Metrics:       metrics,
 		DKGECDSAEndCh: built.ECDSAEnd,
 		DoneCh:        built.Done,
-	}), nil
+	}), params.Threshold(), nil
 }
 
 func logDebug(debug bool, logger *slog.Logger, msg string, args ...any) {

@@ -64,7 +64,7 @@ func TestRunSignSession_PreparesDerivedECDSAShareBeforeRunnerStart(t *testing.T)
 	if err != nil {
 		t.Fatalf("HashV1 returned error: %v", err)
 	}
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
 
 	err = svc.RunSignSession(context.Background(), SignInput{
 		SessionID:             "sign-1",
@@ -96,7 +96,7 @@ func TestRunSignSession_MissingChainCodeFailsBeforeRunnerStart(t *testing.T) {
 	material := runner.materialByKey["key-1"]
 	material.ChainCode = nil
 	runner.materialByKey["key-1"] = material
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
 
 	err := svc.RunSignSession(context.Background(), SignInput{
 		SessionID:         "sign-1",
@@ -124,7 +124,7 @@ func TestRunSignSession_WrongLengthChainCodeMapsToMissingBeforeRunnerStart(t *te
 	material := runner.materialByKey["key-1"]
 	material.ChainCode = []byte{0x11}
 	runner.materialByKey["key-1"] = material
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
 
 	err := svc.RunSignSession(context.Background(), SignInput{
 		SessionID:         "sign-1",
@@ -149,7 +149,7 @@ func TestRunSignSession_WrongLengthChainCodeMapsToMissingBeforeRunnerStart(t *te
 
 func TestRunSignSession_DerivationContextHashMismatchFailsBeforeRunnerStart(t *testing.T) {
 	runner := newDerivedECDSAStubRunner(t, "key-1")
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
 
 	err := svc.RunSignSession(context.Background(), SignInput{
 		SessionID:             "sign-1",
@@ -180,16 +180,14 @@ func TestRunSignSession_CurveMetadataMismatchFailsBeforeRunnerStart(t *testing.T
 	if err != nil {
 		t.Fatalf("MarshalKeyMaterial returned error: %v", err)
 	}
-	store := staticShareStore{stored: &coreshares.StoredShare{
+	reader := staticShareReader{stored: &coreshares.StoredShare{
 		Blob: blob,
 		Meta: coreshares.ShareMeta{
-			KeyID:     "key-1",
-			OrgID:     "org",
 			Algorithm: "ecdsa",
 			Curve:     "p256",
 		},
 	}}
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, store)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, reader, nil)
 
 	err = svc.RunSignSession(context.Background(), SignInput{
 		SessionID:         "sign-1",
@@ -214,7 +212,7 @@ func TestRunSignSession_CurveMetadataMismatchFailsBeforeRunnerStart(t *testing.T
 
 func TestRunSignSession_ReservedEdDSAReturnsUnsupportedBeforeRunnerStart(t *testing.T) {
 	runner := &stubRunner{}
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
 
 	err := svc.RunSignSession(context.Background(), SignInput{
 		SessionID:    "sign-eddsa",

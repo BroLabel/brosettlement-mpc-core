@@ -76,7 +76,7 @@ func TestNewBnbRunner_WithConfig(t *testing.T) {
 
 func TestRunSignDoesNotFallbackFromKeyIDToSessionID(t *testing.T) {
 	runner := NewBnbRunner(slog.Default())
-	runner.setTemporaryECDSADKGShare("session-1", ecdsakeygen.LocalPartySaveData{})
+	runner.setTemporaryECDSADKGShare(DKGRunKey{SessionID: "session-1", LocalPartyID: "p1"}, ecdsakeygen.LocalPartySaveData{})
 
 	err := runner.RunSign(context.Background(), SignJob{
 		SessionID:             "session-1",
@@ -94,7 +94,7 @@ func TestRunSignDoesNotFallbackFromKeyIDToSessionID(t *testing.T) {
 
 func TestRunSignRejectsMissingAdjustedKeyShare(t *testing.T) {
 	runner := NewBnbRunner(slog.Default())
-	runner.setTemporaryECDSADKGShare("key-1", ecdsakeygen.LocalPartySaveData{})
+	runner.setTemporaryECDSADKGShare(DKGRunKey{SessionID: "key-1", LocalPartyID: "p1"}, ecdsakeygen.LocalPartySaveData{})
 
 	err := runner.RunSign(context.Background(), SignJob{
 		SessionID:             "sign-1",
@@ -112,7 +112,8 @@ func TestRunSignRejectsMissingAdjustedKeyShare(t *testing.T) {
 
 func TestDeleteTemporaryECDSADKGSharePreservesKeyMaterial(t *testing.T) {
 	runner := NewBnbRunner(slog.Default())
-	runner.setTemporaryECDSADKGShare("key-1", ecdsakeygen.LocalPartySaveData{})
+	runKey := DKGRunKey{SessionID: "key-1", LocalPartyID: "p1"}
+	runner.setTemporaryECDSADKGShare(runKey, ecdsakeygen.LocalPartySaveData{})
 	runner.ImportECDSAKeyMaterial("key-1", coreshares.ECDSAKeyMaterial{
 		Share:            ecdsakeygen.LocalPartySaveData{},
 		ChainCode:        []byte{0x11},
@@ -120,9 +121,9 @@ func TestDeleteTemporaryECDSADKGSharePreservesKeyMaterial(t *testing.T) {
 		DerivationScheme: "bip32_secp256k1",
 	})
 
-	runner.DeleteTemporaryECDSADKGShare("key-1")
+	runner.DeleteTemporaryECDSADKGShare(runKey)
 
-	if _, ok := runner.getTemporaryECDSADKGShare("key-1"); ok {
+	if _, ok := runner.getTemporaryECDSADKGShare(runKey); ok {
 		t.Fatal("expected temporary DKG share to be deleted")
 	}
 	if _, err := runner.ExportECDSAKeyMaterial("key-1"); err != nil {

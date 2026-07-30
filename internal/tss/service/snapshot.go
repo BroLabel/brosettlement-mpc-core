@@ -3,27 +3,44 @@ package service
 import "github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 
 type Snapshot struct {
-	PreParamsPoolSize          int
-	PreParamsSyncFallbackCount uint64
-	PreParamsAcquireWaitNanos  int64
+	PreParamsPoolSize                  int
+	PreParamsGenerationInFlight        int32
+	PreParamsRefillPaused              bool
+	PreParamsRefillPauseCount          uint64
+	PreParamsRefillResumeCount         uint64
+	PreParamsSyncFallbackCount         uint64
+	PreParamsAcquireWaitNanos          int64
+	PreParamsAcquiredCount             uint64
+	PreParamsConsumedCount             uint64
+	PreParamsDiscardedBeforeStartCount uint64
+	PreParamsAcquireFailedCount        uint64
+	PreParamsConsumeConflictCount      uint64
 }
 
 type SnapshotProvider interface {
 	Snapshot() preparams.Snapshot
 }
 
-func BuildSnapshot(pool Pool, provider SnapshotProvider) Snapshot {
-	if pool == nil {
-		return Snapshot{}
+func BuildSnapshot(pool Pool, provider SnapshotProvider, handles preparams.HandleMetrics) Snapshot {
+	snapshot := Snapshot{
+		PreParamsConsumedCount:             handles.ConsumedCount,
+		PreParamsDiscardedBeforeStartCount: handles.DiscardedBeforeStartCount,
+		PreParamsConsumeConflictCount:      handles.ConsumeConflictCount,
 	}
 
-	snapshot := Snapshot{
-		PreParamsPoolSize: pool.Size(),
+	if pool != nil {
+		snapshot.PreParamsPoolSize = pool.Size()
 	}
 	if provider != nil {
 		poolSnapshot := provider.Snapshot()
+		snapshot.PreParamsGenerationInFlight = poolSnapshot.InFlight
+		snapshot.PreParamsRefillPaused = poolSnapshot.RefillPaused
+		snapshot.PreParamsRefillPauseCount = poolSnapshot.RefillPauseCount
+		snapshot.PreParamsRefillResumeCount = poolSnapshot.RefillResumeCount
 		snapshot.PreParamsSyncFallbackCount = poolSnapshot.SyncFallbackCount
 		snapshot.PreParamsAcquireWaitNanos = poolSnapshot.AcquireWaitNanos
+		snapshot.PreParamsAcquiredCount = poolSnapshot.AcquireCount
+		snapshot.PreParamsAcquireFailedCount = poolSnapshot.AcquireFailedCount
 		if snapshot.PreParamsPoolSize == 0 {
 			snapshot.PreParamsPoolSize = poolSnapshot.Size
 		}

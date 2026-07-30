@@ -5,10 +5,9 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,10 +28,14 @@ type Snapshot struct {
 	GenerationsSuccess uint64
 	GenerationsFailed  uint64
 	AcquireCount       uint64
+	AcquireFailedCount uint64
 	AcquireWaitNanos   int64
 	PoolEmptyCount     uint64
 	SyncFallbackCount  uint64
 	LastGenerateNanos  int64
+	RefillPaused       bool
+	RefillPauseCount   uint64
+	RefillResumeCount  uint64
 }
 
 type item struct {
@@ -46,28 +49,36 @@ type Pool struct {
 
 	ch chan item
 
-	gen      Generator
-	validate Validator
+	gen               Generator
+	validate          Validator
+	fs                cacheFS
+	generatePreParams func(context.Context, int) (*ecdsakeygen.LocalPreParams, error)
 
 	runCtx context.Context
 	cancel context.CancelFunc
 
 	startOnce sync.Once
+	startErr  error
 	closeOnce sync.Once
 	wg        sync.WaitGroup
 
 	refillCh chan struct{}
+	refillMu sync.Mutex
 
-	closed atomic.Bool
+	closed       atomic.Bool
+	refillPaused atomic.Bool
 
 	inFlight          atomic.Int32
 	generationsOK     atomic.Uint64
 	generationsFailed atomic.Uint64
 	acquires          atomic.Uint64
+	acquireFailed     atomic.Uint64
 	acquireWaitNanos  atomic.Int64
 	poolEmpty         atomic.Uint64
 	syncFallback      atomic.Uint64
 	lastGenerateNanos atomic.Int64
+	refillPauses      atomic.Uint64
+	refillResumes     atomic.Uint64
 }
 
 func NewPool(logger *slog.Logger, cfg Config) *Pool {
@@ -82,6 +93,9 @@ func NewPool(logger *slog.Logger, cfg Config) *Pool {
 	}
 	if cfg.MaxConcurrency > cfg.TargetSize {
 		cfg.MaxConcurrency = cfg.TargetSize
+	}
+	if cfg.GenerationParallelism < 1 {
+		cfg.GenerationParallelism = 2
 	}
 	if cfg.GenerateTimeout <= 0 {
 		cfg.GenerateTimeout = 7 * time.Minute
@@ -101,6 +115,10 @@ func NewPool(logger *slog.Logger, cfg Config) *Pool {
 		logger:   logger,
 		ch:       make(chan item, cfg.TargetSize),
 		refillCh: make(chan struct{}, 1),
+		fs:       newOSCacheFS(),
+		generatePreParams: func(ctx context.Context, parallelism int) (*ecdsakeygen.LocalPreParams, error) {
+			return ecdsakeygen.GeneratePreParamsWithContext(ctx, parallelism)
+		},
 	}
 	p.gen = p.defaultGenerator
 	p.validate = func(params *ecdsakeygen.LocalPreParams) bool {
@@ -124,50 +142,59 @@ func (p *Pool) Start(ctx context.Context) error {
 	if p.closed.Load() {
 		return ErrPoolClosed
 	}
-	var startErr error
 	p.startOnce.Do(func() {
 		if !p.cfg.Enabled {
 			p.logger.Info("preparams pool disabled")
 			return
 		}
-		// #nosec G118 -- cancel is stored on Pool and called from Close().
-		p.runCtx, p.cancel = context.WithCancel(ctx)
 		if p.cfg.FileCacheEnabled {
+			if err := ensurePrivateCacheDir(p.fs, p.cfg.FileCacheDir); err != nil {
+				p.startErr = err
+				return
+			}
+			if err := validateCacheCapabilities(p.fs, p.cfg.FileCacheDir); err != nil {
+				p.startErr = err
+				return
+			}
 			if err := p.loadFromCache(p.cfg.TargetSize); err != nil {
-				p.logger.Warn("preparams cache warmup failed", "err", err)
+				p.startErr = fmt.Errorf("load preparams cache: %w", err)
+				return
 			}
 		}
+		// #nosec G118 -- cancel is stored on Pool and called from Close().
+		p.runCtx, p.cancel = context.WithCancel(ctx)
 		p.logger.Info("preparams pool started",
 			"target_size", p.cfg.TargetSize,
 			"max_concurrency", p.cfg.MaxConcurrency,
+			"generation_parallelism", p.cfg.GenerationParallelism,
 			"generate_timeout", p.cfg.GenerateTimeout,
 			"acquire_timeout", p.cfg.AcquireTimeout,
 			"sync_fallback_on_empty", p.cfg.SyncFallbackOnEmpty,
+			"auto_refill_on_acquire", p.cfg.AutoRefillOnAcquire,
 		)
 		p.wg.Add(1)
 		go p.refillLoop()
 		p.signalRefill()
 	})
-	return startErr
+	return p.startErr
 }
 
 func (p *Pool) Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error) {
 	if p.closed.Load() {
-		return nil, ErrPoolClosed
+		return p.failAcquire(ErrPoolClosed)
 	}
-	p.acquires.Add(1)
 
 	if !p.cfg.Enabled {
-		return p.syncGenerate(ctx)
+		return p.finishSynchronousAcquire(p.syncGenerate(ctx))
 	}
 	if p.runCtx == nil {
 		p.poolEmpty.Add(1)
 		if !p.cfg.SyncFallbackOnEmpty {
-			return nil, fmt.Errorf("acquire preparams from pool: %w", context.DeadlineExceeded)
+			return p.failAcquire(fmt.Errorf("acquire preparams from pool: %w", context.DeadlineExceeded))
 		}
 		p.syncFallback.Add(1)
 		p.logger.Warn("preparams pool not started, using sync fallback")
-		return p.syncGenerate(ctx)
+		return p.finishSynchronousAcquire(p.syncGenerate(ctx))
 	}
 
 	acquireCtx := ctx
@@ -183,19 +210,43 @@ func (p *Pool) Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 		p.poolEmpty.Add(1)
 		p.acquireWaitNanos.Add(durationToNanos(time.Since(started)))
 		if !p.cfg.SyncFallbackOnEmpty {
-			return nil, fmt.Errorf("acquire preparams from pool: %w", acquireCtx.Err())
+			return p.failAcquire(fmt.Errorf("acquire preparams from pool: %w", acquireCtx.Err()))
 		}
 		p.syncFallback.Add(1)
 		p.logger.Warn("preparams pool empty, using sync fallback", "err", acquireCtx.Err())
-		return p.syncGenerate(ctx)
+		return p.finishSynchronousAcquire(p.syncGenerate(ctx))
 	case it := <-p.ch:
 		p.acquireWaitNanos.Add(durationToNanos(time.Since(started)))
-		if it.cachePath != "" {
-			_ = os.Remove(it.cachePath)
+		if p.cfg.AutoRefillOnAcquire {
+			defer p.signalRefill()
 		}
-		p.signalRefill()
+		if !p.validate(it.params) {
+			return p.failAcquire(ErrInvalidCachedPreParams)
+		}
+		if p.cfg.FileCacheEnabled && it.cachePath == "" {
+			return p.failAcquire(ErrCachePathRequired)
+		}
+		if it.cachePath != "" {
+			if err := durablyRemoveCacheFile(p.fs, p.cfg.FileCacheDir, it.cachePath); err != nil {
+				return p.failAcquire(err)
+			}
+		}
+		p.acquires.Add(1)
 		return it.params, nil
 	}
+}
+
+func (p *Pool) finishSynchronousAcquire(params *ecdsakeygen.LocalPreParams, err error) (*ecdsakeygen.LocalPreParams, error) {
+	if err != nil {
+		return p.failAcquire(err)
+	}
+	p.acquires.Add(1)
+	return params, nil
+}
+
+func (p *Pool) failAcquire(err error) (*ecdsakeygen.LocalPreParams, error) {
+	p.acquireFailed.Add(1)
+	return nil, err
 }
 
 func (p *Pool) Size() int {
@@ -209,10 +260,38 @@ func (p *Pool) Snapshot() Snapshot {
 		GenerationsSuccess: p.generationsOK.Load(),
 		GenerationsFailed:  p.generationsFailed.Load(),
 		AcquireCount:       p.acquires.Load(),
+		AcquireFailedCount: p.acquireFailed.Load(),
 		AcquireWaitNanos:   p.acquireWaitNanos.Load(),
 		PoolEmptyCount:     p.poolEmpty.Load(),
 		SyncFallbackCount:  p.syncFallback.Load(),
 		LastGenerateNanos:  p.lastGenerateNanos.Load(),
+		RefillPaused:       p.refillPaused.Load(),
+		RefillPauseCount:   p.refillPauses.Load(),
+		RefillResumeCount:  p.refillResumes.Load(),
+	}
+}
+
+// PauseRefill prevents new background generation jobs from starting. Generation
+// jobs that were already in flight continue to completion.
+func (p *Pool) PauseRefill() {
+	p.refillMu.Lock()
+	defer p.refillMu.Unlock()
+	if p.refillPaused.CompareAndSwap(false, true) {
+		p.refillPauses.Add(1)
+	}
+}
+
+// ResumeRefill re-enables background generation and asynchronously fills any
+// inventory deficit. Repeated calls have no effect.
+func (p *Pool) ResumeRefill() {
+	p.refillMu.Lock()
+	resumed := p.refillPaused.CompareAndSwap(true, false)
+	if resumed {
+		p.refillResumes.Add(1)
+	}
+	p.refillMu.Unlock()
+	if resumed {
+		p.signalRefill()
 	}
 }
 
@@ -229,23 +308,23 @@ func (p *Pool) Close() error {
 
 func (p *Pool) refillLoop() {
 	defer p.wg.Done()
-	t := time.NewTicker(2 * time.Second)
-	defer t.Stop()
 
 	for {
 		p.ensureRefillWorkers()
 		select {
 		case <-p.runCtx.Done():
 			return
-		case <-t.C:
 		case <-p.refillCh:
 		}
 	}
 }
 
 func (p *Pool) ensureRefillWorkers() {
+	p.refillMu.Lock()
+	defer p.refillMu.Unlock()
+
 	for {
-		if p.closed.Load() {
+		if p.closed.Load() || p.refillPaused.Load() {
 			return
 		}
 		inFlight := int(p.inFlight.Load())
@@ -295,16 +374,20 @@ func (p *Pool) generateOne() {
 	if p.cfg.FileCacheEnabled {
 		cachePath, err := p.saveToCache(params)
 		if err != nil {
+			p.generationsFailed.Add(1)
 			p.logger.Warn("preparams save cache failed", "err", err)
-		} else {
-			it.cachePath = cachePath
+			p.waitBackoff()
+			return
 		}
+		it.cachePath = cachePath
 	}
 
 	select {
 	case <-p.runCtx.Done():
 		if it.cachePath != "" {
-			_ = os.Remove(it.cachePath)
+			if err := durablyRemoveCacheFile(p.fs, p.cfg.FileCacheDir, it.cachePath); err != nil {
+				p.logger.Warn("preparams cache cleanup failed", "err", err)
+			}
 		}
 		return
 	case p.ch <- it:
@@ -312,7 +395,9 @@ func (p *Pool) generateOne() {
 		p.logger.Debug("preparams generated", "pool_size", len(p.ch), "duration", time.Since(started))
 	default:
 		if it.cachePath != "" {
-			_ = os.Remove(it.cachePath)
+			if err := durablyRemoveCacheFile(p.fs, p.cfg.FileCacheDir, it.cachePath); err != nil {
+				p.logger.Warn("preparams cache cleanup failed", "err", err)
+			}
 		}
 	}
 }
@@ -338,11 +423,7 @@ func (p *Pool) defaultGenerator(parent context.Context) (*ecdsakeygen.LocalPrePa
 	}
 	defer cancel()
 
-	concurrency := runtime.GOMAXPROCS(0)
-	if concurrency < 2 {
-		concurrency = 2
-	}
-	return ecdsakeygen.GeneratePreParamsWithContext(ctx, concurrency)
+	return p.generatePreParams(ctx, p.cfg.GenerationParallelism)
 }
 
 func (p *Pool) waitBackoff() {
@@ -368,10 +449,7 @@ func (p *Pool) loadFromCache(max int) error {
 	if !p.cfg.FileCacheEnabled {
 		return nil
 	}
-	if err := os.MkdirAll(p.cfg.FileCacheDir, 0o750); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(p.cfg.FileCacheDir)
+	entries, err := p.fs.ReadDir(p.cfg.FileCacheDir)
 	if err != nil {
 		return err
 	}
@@ -379,13 +457,15 @@ func (p *Pool) loadFromCache(max int) error {
 		if len(p.ch) >= max {
 			break
 		}
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".gob" {
+		if !entry.Type().IsRegular() || filepath.Ext(entry.Name()) != ".gob" {
 			continue
 		}
 		path := filepath.Join(p.cfg.FileCacheDir, entry.Name())
-		params, err := loadOne(p.cfg.FileCacheDir, path)
+		params, err := loadOne(p.fs, p.cfg.FileCacheDir, path)
 		if err != nil || !p.validate(params) {
-			_ = os.Remove(path)
+			if removeErr := durablyRemoveCacheFile(p.fs, p.cfg.FileCacheDir, path); removeErr != nil {
+				return fmt.Errorf("remove malformed preparams cache entry: %w", removeErr)
+			}
 			continue
 		}
 		select {
@@ -401,7 +481,7 @@ func (p *Pool) saveToCache(params *ecdsakeygen.LocalPreParams) (string, error) {
 	if !p.cfg.FileCacheEnabled {
 		return "", nil
 	}
-	if err := os.MkdirAll(p.cfg.FileCacheDir, 0o750); err != nil {
+	if err := ensurePrivateCacheDir(p.fs, p.cfg.FileCacheDir); err != nil {
 		return "", err
 	}
 	path := filepath.Join(p.cfg.FileCacheDir, uuid.NewString()+".gob")
@@ -409,26 +489,20 @@ func (p *Pool) saveToCache(params *ecdsakeygen.LocalPreParams) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// #nosec G304 -- path is generated and constrained to FileCacheDir.
-	f, err := os.Create(path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = f.Close() }()
-	if err := gob.NewEncoder(f).Encode(params); err != nil {
-		_ = os.Remove(path)
+	if err := publishCacheFile(p.fs, p.cfg.FileCacheDir, path, func(writer io.Writer) error {
+		return gob.NewEncoder(writer).Encode(params)
+	}); err != nil {
 		return "", err
 	}
 	return path, nil
 }
 
-func loadOne(baseDir, path string) (*ecdsakeygen.LocalPreParams, error) {
+func loadOne(fs cacheFS, baseDir, path string) (*ecdsakeygen.LocalPreParams, error) {
 	safePath, err := tssutils.SafePathUnderDir(baseDir, path)
 	if err != nil {
 		return nil, err
 	}
-	// #nosec G304 -- path comes from cache dir listing and is constrained to FileCacheDir.
-	f, err := os.Open(safePath)
+	f, err := fs.Open(safePath)
 	if err != nil {
 		return nil, err
 	}

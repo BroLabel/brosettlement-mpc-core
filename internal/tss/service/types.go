@@ -12,23 +12,24 @@ import (
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
 
-var ErrNilRunner = errors.New("runner is required")
+var (
+	ErrNilRunner       = errors.New("runner is required")
+	ErrDuplicateDKGRun = errors.New("duplicate dkg run")
+)
 
 type Runner interface {
 	RunDKG(ctx context.Context, job tssbnbrunner.DKGJob, transport coretransport.FrameTransport) error
 	RunSign(ctx context.Context, job tssbnbrunner.SignJob, transport coretransport.FrameTransport) error
 	ExportECDSASignature(key string) (common.SignatureData, error)
-	ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error)
+	ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error)
 	ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error)
 	ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial)
-	DeleteTemporaryECDSADKGShare(key string)
+	DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey)
 	ECDSAAddress(key string) (string, error)
 }
 
-type ShareStore interface {
-	SaveShare(ctx context.Context, keyID string, blob []byte, meta coreshares.ShareMeta) error
-	LoadShare(ctx context.Context, keyID string) (*coreshares.StoredShare, error)
-}
+type ShareReader = coreshares.ShareReader
+type ShareWriter = coreshares.ShareWriter
 
 type LifecyclePool interface {
 	PreParamsPool
@@ -48,19 +49,20 @@ type DKGDerivationMaterial struct {
 }
 
 type DKGInput struct {
-	SessionID          string
-	LocalPartyID       string
-	OrgID              string
-	KeyID              string
-	Parties            []string
-	Threshold          uint32
-	Curve              string
-	Algorithm          string
-	DerivationMaterial DKGDerivationMaterial
-	Transport          coretransport.FrameTransport
-	EmptyKeyErr        error
-	MissingPub         error
-	MissingAddr        error
+	SessionID                   string
+	LocalPartyID                string
+	OrgID                       string
+	KeyID                       string
+	OpaqueDescriptorFingerprint []byte
+	Parties                     []string
+	Threshold                   uint32
+	Curve                       string
+	Algorithm                   string
+	DerivationMaterial          DKGDerivationMaterial
+	Transport                   coretransport.FrameTransport
+	EmptyKeyErr                 error
+	MissingPub                  error
+	MissingAddr                 error
 }
 
 type DKGOutput struct {

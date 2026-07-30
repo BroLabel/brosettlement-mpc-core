@@ -30,7 +30,7 @@ var (
 // BnbRunner runs tss-lib protocol loops over abstract frame transport.
 type BnbRunner struct {
 	mu                      sync.RWMutex
-	temporaryECDSADKGShares map[string]ecdsakeygen.LocalPartySaveData
+	temporaryECDSADKGShares map[DKGRunKey]ecdsakeygen.LocalPartySaveData
 	ecdsaMaterials          map[string]coreshares.ECDSAKeyMaterial
 	ecdsaSigs               map[string]*common.SignatureData
 	logger                  *slog.Logger
@@ -77,7 +77,7 @@ func NewBnbRunner(logger *slog.Logger, opts ...Option) *BnbRunner {
 		cfg.metrics = bnbutils.NoopMetrics{}
 	}
 	return &BnbRunner{
-		temporaryECDSADKGShares: map[string]ecdsakeygen.LocalPartySaveData{},
+		temporaryECDSADKGShares: map[DKGRunKey]ecdsakeygen.LocalPartySaveData{},
 		ecdsaMaterials:          map[string]coreshares.ECDSAKeyMaterial{},
 		ecdsaSigs:               map[string]*common.SignatureData{},
 		logger:                  logger,
@@ -88,6 +88,7 @@ func NewBnbRunner(logger *slog.Logger, opts ...Option) *BnbRunner {
 }
 
 func (r *BnbRunner) RunDKG(ctx context.Context, job DKGJob, transport Transport) error {
+	runKey := DKGRunKey{SessionID: job.SessionID, LocalPartyID: job.LocalPartyID}
 	return flow.RunDKG(ctx, flow.DKGRunInput{
 		Job: flow.DKGRunJob{
 			SessionID:      job.SessionID,
@@ -104,7 +105,7 @@ func (r *BnbRunner) RunDKG(ctx context.Context, job DKGJob, transport Transport)
 		Config:    r.cfg,
 		Metrics:   r.metrics,
 		OnECDSAKeyShare: func(data ecdsakeygen.LocalPartySaveData) {
-			r.setTemporaryECDSADKGShare(job.SessionID, data)
+			r.setTemporaryECDSADKGShare(runKey, data)
 		},
 	})
 }
@@ -164,10 +165,10 @@ func (r *BnbRunner) ExportECDSASignature(key string) (common.SignatureData, erro
 	}, nil
 }
 
-func (r *BnbRunner) ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
+func (r *BnbRunner) ExportTemporaryECDSADKGShare(key DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
 	data, ok := r.getTemporaryECDSADKGShare(key)
 	if !ok {
-		return ecdsakeygen.LocalPartySaveData{}, fmt.Errorf("%w: key=%s", ErrKeyShareNotFound, key)
+		return ecdsakeygen.LocalPartySaveData{}, fmt.Errorf("%w: session=%s party=%s", ErrKeyShareNotFound, key.SessionID, key.LocalPartyID)
 	}
 	return data, nil
 }
@@ -194,8 +195,8 @@ func (r *BnbRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMater
 	return cloneECDSAKeyMaterial(material), nil
 }
 
-func (r *BnbRunner) DeleteTemporaryECDSADKGShare(key string) {
-	if key == "" {
+func (r *BnbRunner) DeleteTemporaryECDSADKGShare(key DKGRunKey) {
+	if key.SessionID == "" || key.LocalPartyID == "" {
 		return
 	}
 	r.mu.Lock()
@@ -206,10 +207,7 @@ func (r *BnbRunner) DeleteTemporaryECDSADKGShare(key string) {
 func (r *BnbRunner) ECDSAAddress(key string) (string, error) {
 	share, ok := r.getECDSAKeyMaterialShare(key)
 	if !ok {
-		share, ok = r.getTemporaryECDSADKGShare(key)
-		if !ok {
-			return "", fmt.Errorf("%w: key=%s", ErrKeyShareNotFound, key)
-		}
+		return "", fmt.Errorf("%w: key=%s", ErrKeyShareNotFound, key)
 	}
 	addr, err := tssbnbutils.ECDSAAddressFromShare(share)
 	if errors.Is(err, tssbnbutils.ErrECDSAPubKeyUnavailable) {
@@ -218,19 +216,19 @@ func (r *BnbRunner) ECDSAAddress(key string) (string, error) {
 	return addr, err
 }
 
-func (r *BnbRunner) setTemporaryECDSADKGShare(key string, data ecdsakeygen.LocalPartySaveData) {
-	if key == "" {
+func (r *BnbRunner) setTemporaryECDSADKGShare(key DKGRunKey, data ecdsakeygen.LocalPartySaveData) {
+	if key.SessionID == "" || key.LocalPartyID == "" {
 		return
 	}
 	r.mu.Lock()
 	if r.temporaryECDSADKGShares == nil {
-		r.temporaryECDSADKGShares = map[string]ecdsakeygen.LocalPartySaveData{}
+		r.temporaryECDSADKGShares = map[DKGRunKey]ecdsakeygen.LocalPartySaveData{}
 	}
 	r.temporaryECDSADKGShares[key] = data
 	r.mu.Unlock()
 }
 
-func (r *BnbRunner) getTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, bool) {
+func (r *BnbRunner) getTemporaryECDSADKGShare(key DKGRunKey) (ecdsakeygen.LocalPartySaveData, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	data, ok := r.temporaryECDSADKGShares[key]

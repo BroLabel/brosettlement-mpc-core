@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -115,7 +116,7 @@ func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 
 func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalService(t *testing.T) {
 	runner := newFacadeDerivedRunner(t, "key-1")
-	svc := newService(runner, slog.Default(), nil, nil, nil)
+	svc := newService(runner, slog.Default(), nil, nil, nil, nil)
 	ctx := validFacadeDerivationContext()
 	ctx.Algorithm = " ECDSA "
 	ctx.Curve = " SECP256K1 "
@@ -241,6 +242,7 @@ func validFacadeDerivationContext() DerivationContext {
 
 type facadeDerivedRunner struct {
 	materialByKey map[string]coreshares.ECDSAKeyMaterial
+	lastDKGJob    tssbnbrunner.DKGJob
 	lastSignJob   tssbnbrunner.SignJob
 }
 
@@ -267,7 +269,8 @@ func newFacadeDerivedRunner(t *testing.T, keyID string) *facadeDerivedRunner {
 	}
 }
 
-func (r *facadeDerivedRunner) RunDKG(context.Context, tssbnbrunner.DKGJob, tssbnbrunner.Transport) error {
+func (r *facadeDerivedRunner) RunDKG(_ context.Context, job tssbnbrunner.DKGJob, _ tssbnbrunner.Transport) error {
+	r.lastDKGJob = job
 	return nil
 }
 
@@ -280,7 +283,7 @@ func (r *facadeDerivedRunner) ExportECDSASignature(string) (common.SignatureData
 	return common.SignatureData{}, nil
 }
 
-func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(string) (ecdsakeygen.LocalPartySaveData, error) {
+func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
 	return ecdsakeygen.LocalPartySaveData{}, ErrShareNotFound
 }
 
@@ -296,8 +299,8 @@ func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key string, material coresh
 	r.materialByKey[key] = material
 }
 
-func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key string) {
-	delete(r.materialByKey, key)
+func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
+	delete(r.materialByKey, key.SessionID)
 }
 
 func (r *facadeDerivedRunner) ECDSAAddress(string) (string, error) {
@@ -335,6 +338,97 @@ func TestServiceDoesNotExposeShareOnlyAPI(t *testing.T) {
 	}
 }
 
+type forgedDKGPreParamsHandle struct{}
+
+func (forgedDKGPreParamsHandle) Discard() error      { return nil }
+func (forgedDKGPreParamsHandle) dkgPreParamsHandle() {}
+
+func TestDKGPreParamsHandleExposesOnlyDiscardToCallers(t *testing.T) {
+	handleType := reflect.TypeOf((*DKGPreParamsHandle)(nil)).Elem()
+	var exported []string
+	for i := 0; i < handleType.NumMethod(); i++ {
+		method := handleType.Method(i)
+		if method.PkgPath == "" {
+			exported = append(exported, method.Name)
+		}
+	}
+	if !reflect.DeepEqual(exported, []string{"Discard"}) {
+		t.Fatalf("exported handle methods = %v, want only Discard", exported)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsInvalidAndForeignPublicHandles(t *testing.T) {
+	request := validDKGRequestWithMaterial()
+	sourceA := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+	sourceB := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
+	runnerA := newFacadeDerivedRunner(t, request.Session.KeyID)
+	runnerB := newFacadeDerivedRunner(t, request.Session.KeyID)
+	serviceA := newService(runnerA, slog.Default(), nil, nil, nil, sourceA)
+	serviceB := newService(runnerB, slog.Default(), nil, nil, nil, sourceB)
+
+	owned, err := serviceA.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireDKGPreParams failed: %v", err)
+	}
+	var typedNil *dkgPreParamsHandle
+	for name, handle := range map[string]DKGPreParamsHandle{
+		"nil":       nil,
+		"typed nil": typedNil,
+		"forged":    forgedDKGPreParamsHandle{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := serviceA.RunDKGSessionWithPreParams(context.Background(), request, handle); !errors.Is(err, ErrInvalidPreParamsHandle) {
+				t.Fatalf("error = %v, want ErrInvalidPreParamsHandle", err)
+			}
+			if runnerA.lastDKGJob.SessionID != "" {
+				t.Fatal("runner started for invalid public handle")
+			}
+		})
+	}
+
+	if _, err := serviceB.RunDKGSessionWithPreParams(context.Background(), request, owned); !errors.Is(err, ErrForeignPreParamsHandle) {
+		t.Fatalf("foreign service error = %v, want ErrForeignPreParamsHandle", err)
+	}
+	if runnerB.lastDKGJob.SessionID != "" {
+		t.Fatal("foreign service started runner")
+	}
+	if err := owned.Discard(); err != nil {
+		t.Fatalf("foreign attempt changed owned handle: %v", err)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsConsumesPublicHandle(t *testing.T) {
+	request := validDKGRequestWithMaterial()
+	material := &ecdsakeygen.LocalPreParams{}
+	source := &sourceStub{value: material}
+	runner := newFacadeDerivedRunner(t, request.Session.KeyID)
+	service := newService(runner, slog.Default(), nil, nil, nil, source)
+
+	handle, err := service.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireDKGPreParams failed: %v", err)
+	}
+	if _, err := service.RunDKGSessionWithPreParams(context.Background(), request, handle); !errors.Is(err, ErrShareNotFound) {
+		t.Fatalf("RunDKGSessionWithPreParams error = %v, want downstream share error", err)
+	}
+	if runner.lastDKGJob.ECDSAPreParams != material {
+		t.Fatal("runner did not receive consumed preparams")
+	}
+	if err := handle.Discard(); !errors.Is(err, ErrPreParamsConsumed) {
+		t.Fatalf("discard after run error = %v, want ErrPreParamsConsumed", err)
+	}
+	if _, err := service.RunDKGSessionWithPreParams(context.Background(), request, handle); !errors.Is(err, ErrPreParamsConsumed) {
+		t.Fatalf("repeated run error = %v, want ErrPreParamsConsumed", err)
+	}
+	wantSnapshot := Snapshot{
+		PreParamsConsumedCount:        1,
+		PreParamsConsumeConflictCount: 1,
+	}
+	if got := service.Snapshot(); got != wantSnapshot {
+		t.Fatalf("Snapshot() = %+v, want %+v", got, wantSnapshot)
+	}
+}
+
 func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {
 	got := DKGOutput{
 		KeyID:     "key-1",
@@ -346,17 +440,15 @@ func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {
 	}
 }
 
-type stubShareStore struct{}
+type stubShareReader struct{}
 
-func (stubShareStore) SaveShare(_ context.Context, _ string, _ []byte, _ coreshares.ShareMeta) error {
-	return nil
-}
-
-func (stubShareStore) LoadShare(_ context.Context, _ string) (*coreshares.StoredShare, error) {
+func (stubShareReader) LoadShare(_ context.Context, _ string) (*coreshares.StoredShare, error) {
 	return nil, ErrShareNotFound
 }
 
-func (stubShareStore) DisableShare(_ context.Context, _ string) error {
+type stubShareWriter struct{}
+
+func (stubShareWriter) SaveShare(_ context.Context, _ SaveShareInput) error {
 	return nil
 }
 
@@ -371,7 +463,69 @@ func (s *sourceStub) Acquire(_ context.Context) (*ecdsakeygen.LocalPreParams, er
 	return s.value, s.err
 }
 
-func TestNewBnbServiceWithOptionsConfigShareStoreMetrics(t *testing.T) {
+type refillControlPoolStub struct {
+	sourceStub
+	pauses   int
+	resumes  int
+	snapshot preparams.Snapshot
+}
+
+func (p *refillControlPoolStub) Size() int {
+	return p.snapshot.Size
+}
+
+func (p *refillControlPoolStub) Start(context.Context) error {
+	return nil
+}
+
+func (p *refillControlPoolStub) Close() error {
+	return nil
+}
+
+func (p *refillControlPoolStub) PauseRefill() {
+	p.pauses++
+}
+
+func (p *refillControlPoolStub) ResumeRefill() {
+	p.resumes++
+}
+
+func (p *refillControlPoolStub) Snapshot() preparams.Snapshot {
+	return p.snapshot
+}
+
+func TestServiceExposesGenericPreParamsRefillControlsAndMetrics(t *testing.T) {
+	pool := &refillControlPoolStub{
+		snapshot: preparams.Snapshot{
+			Size:              2,
+			InFlight:          1,
+			RefillPaused:      true,
+			RefillPauseCount:  2,
+			RefillResumeCount: 1,
+		},
+	}
+	runner := newFacadeDerivedRunner(t, "key-1")
+	service := newService(runner, slog.Default(), pool, nil, nil, nil)
+
+	service.PausePreParamsRefill()
+	service.ResumePreParamsRefill()
+
+	if pool.pauses != 1 || pool.resumes != 1 {
+		t.Fatalf("refill control calls = pause:%d resume:%d, want 1:1", pool.pauses, pool.resumes)
+	}
+	want := Snapshot{
+		PreParamsPoolSize:           2,
+		PreParamsGenerationInFlight: 1,
+		PreParamsRefillPaused:       true,
+		PreParamsRefillPauseCount:   2,
+		PreParamsRefillResumeCount:  1,
+	}
+	if got := service.Snapshot(); got != want {
+		t.Fatalf("Snapshot() = %+v, want %+v", got, want)
+	}
+}
+
+func TestNewBnbServiceWithOptionsConfigShareCapabilitiesMetrics(t *testing.T) {
 	cfg := PreParamsConfig{
 		Enabled:             false,
 		TargetSize:          2,
@@ -383,12 +537,14 @@ func TestNewBnbServiceWithOptionsConfigShareStoreMetrics(t *testing.T) {
 		FileCacheEnabled:    false,
 		FileCacheDir:        ".tmp/test",
 	}
-	store := stubShareStore{}
+	reader := stubShareReader{}
+	writer := stubShareWriter{}
 
 	svc := NewBnbService(
 		slog.Default(),
 		WithPreParamsConfig(cfg),
-		WithShareStore(store),
+		WithShareReader(reader),
+		WithShareWriter(writer),
 		WithMetrics(bnbutils.NoopMetrics{}),
 	)
 	if svc == nil {

@@ -673,24 +673,32 @@ func (e *ProtocolExecution) forwardOutgoing(ctx context.Context, transport Trans
 }
 
 func inferRoundHint(msgType string) uint32 {
-	switch {
-	case strings.Contains(msgType, "KGRound1Message"):
+	messageName := msgType[strings.LastIndexByte(msgType, '.')+1:]
+	switch messageName {
+	case "KGRound1Message":
 		return 1
-	case strings.Contains(msgType, "KGRound2Message1"),
-		strings.Contains(msgType, "KGRound2Message2"):
+	case "KGRound2Message1", "KGRound2Message2":
 		return 2
-	case strings.Contains(msgType, "KGRound3Message"):
+	case "KGRound3Message":
 		return 3
-	case strings.Contains(msgType, "SignRound1Message"):
+	case "SignRound1Message", "SignRound1Message1", "SignRound1Message2":
 		return 1
-	case strings.Contains(msgType, "SignRound2Message"):
+	case "SignRound2Message":
 		return 2
-	case strings.Contains(msgType, "SignRound3Message"):
+	case "SignRound3Message":
 		return 3
-	case strings.Contains(msgType, "SignRound4Message"):
+	case "SignRound4Message":
 		return 4
-	case strings.Contains(msgType, "SignRound5Message"):
+	case "SignRound5Message":
 		return 5
+	case "SignRound6Message":
+		return 6
+	case "SignRound7Message":
+		return 7
+	case "SignRound8Message":
+		return 8
+	case "SignRound9Message":
+		return 9
 	default:
 		return 0
 	}

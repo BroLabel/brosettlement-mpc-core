@@ -91,11 +91,11 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, run
 	return nil
 }
 
-func importNoStoreECDSAKeyMaterial(runner Runner, shareWriter ShareWriter, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) {
+func importNoStoreECDSAKeyMaterial(runner Runner, shareWriter ShareWriter, runKey tssbnbrunner.DKGRunKey, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) {
 	if shareWriter != nil || len(material.ChainCode) != 32 {
 		return
 	}
-	runner.ImportECDSAKeyMaterial(keyID, coreshares.ECDSAKeyMaterial{
+	runner.ImportECDSAKeyMaterial(tssbnbrunner.ECDSAKeyMaterialKey{KeyID: keyID, LocalPartyID: runKey.LocalPartyID}, coreshares.ECDSAKeyMaterial{
 		Share:            share,
 		ChainCode:        append([]byte(nil), material.ChainCode...),
 		PublicKeyFormat:  corederivation.PublicKeyFormatUncompressedHex,

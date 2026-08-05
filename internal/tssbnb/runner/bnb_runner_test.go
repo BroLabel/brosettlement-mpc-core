@@ -114,7 +114,8 @@ func TestDeleteTemporaryECDSADKGSharePreservesKeyMaterial(t *testing.T) {
 	runner := NewBnbRunner(slog.Default())
 	runKey := DKGRunKey{SessionID: "key-1", LocalPartyID: "p1"}
 	runner.setTemporaryECDSADKGShare(runKey, ecdsakeygen.LocalPartySaveData{})
-	runner.ImportECDSAKeyMaterial("key-1", coreshares.ECDSAKeyMaterial{
+	materialKey := ECDSAKeyMaterialKey{KeyID: "key-1", LocalPartyID: "p1"}
+	runner.ImportECDSAKeyMaterial(materialKey, coreshares.ECDSAKeyMaterial{
 		Share:            ecdsakeygen.LocalPartySaveData{},
 		ChainCode:        []byte{0x11},
 		PublicKeyFormat:  "uncompressed_hex",
@@ -126,7 +127,7 @@ func TestDeleteTemporaryECDSADKGSharePreservesKeyMaterial(t *testing.T) {
 	if _, ok := runner.getTemporaryECDSADKGShare(runKey); ok {
 		t.Fatal("expected temporary DKG share to be deleted")
 	}
-	if _, err := runner.ExportECDSAKeyMaterial("key-1"); err != nil {
+	if _, err := runner.ExportECDSAKeyMaterial(materialKey); err != nil {
 		t.Fatalf("expected key material to remain, got %v", err)
 	}
 }

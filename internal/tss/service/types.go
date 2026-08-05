@@ -22,8 +22,8 @@ type Runner interface {
 	RunSign(ctx context.Context, job tssbnbrunner.SignJob, transport coretransport.FrameTransport) error
 	ExportECDSASignature(key string) (common.SignatureData, error)
 	ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error)
-	ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error)
-	ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial)
+	ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error)
+	ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial)
 	DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey)
 	ECDSAAddress(key string) (string, error)
 }

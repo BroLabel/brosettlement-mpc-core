@@ -51,7 +51,7 @@ func loadECDSAKeyMaterial(ctx context.Context, shareReader ShareReader, runner R
 		return coreshares.ECDSAKeyMaterial{}, err
 	}
 	if shareReader == nil {
-		return runner.ExportECDSAKeyMaterial(keyID)
+		return runner.ExportECDSAKeyMaterial(tssbnbrunner.ECDSAKeyMaterialKey{KeyID: keyID, LocalPartyID: in.LocalPartyID})
 	}
 	stored, err := shareReader.LoadShare(ctx, keyID)
 	if err == nil {

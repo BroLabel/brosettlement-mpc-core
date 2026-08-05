@@ -46,9 +46,9 @@ func (r *stubRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (e
 	return share, nil
 }
 
-func (r *stubRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
-	r.events = append(r.events, "export-material:"+key)
-	if material, ok := r.materialByKey[key]; ok {
+func (r *stubRunner) ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error) {
+	r.events = append(r.events, "export-material:"+key.KeyID+":"+key.LocalPartyID)
+	if material, ok := r.materialByKey[key.KeyID]; ok {
 		return material, nil
 	}
 	return coreshares.ECDSAKeyMaterial{}, errShareMissing
@@ -82,15 +82,15 @@ func (r *stubRunner) ExportECDSASignature(string) (common.SignatureData, error) 
 	return common.SignatureData{}, nil
 }
 
-func (r *stubRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
+func (r *stubRunner) ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial) {
 	if r.materialByKey == nil {
 		r.materialByKey = map[string]coreshares.ECDSAKeyMaterial{}
 	}
 	if r.shareByKey == nil {
 		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
 	}
-	r.materialByKey[key] = material
-	r.shareByKey[key] = material.Share
+	r.materialByKey[key.KeyID] = material
+	r.shareByKey[key.KeyID] = material.Share
 }
 
 func (r *stubRunner) ECDSAAddress(string) (string, error) {

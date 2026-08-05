@@ -171,7 +171,7 @@ func (s *Service) runDKGSession(ctx context.Context, in DKGInput, suppliedPrePar
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-	importNoStoreECDSAKeyMaterial(s.runner, s.shareWriter, keyID, share, material)
+	importNoStoreECDSAKeyMaterial(s.runner, s.shareWriter, runKey, keyID, share, material)
 	if err = persistECDSAShareAfterDKG(ctx, s.shareWriter, s.runner, runKey, keyID, in.OpaqueDescriptorFingerprint, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err

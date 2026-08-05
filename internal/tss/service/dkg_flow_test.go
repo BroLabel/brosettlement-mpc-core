@@ -51,6 +51,7 @@ func newECDSASecp256k1StubRunner(t *testing.T, sessionID string) *stubRunner {
 type concurrentDKGRunner struct {
 	mu         sync.Mutex
 	shares     map[tssbnbrunner.DKGRunKey]ecdsakeygen.LocalPartySaveData
+	materials  map[tssbnbrunner.ECDSAKeyMaterialKey]coreshares.ECDSAKeyMaterial
 	transports map[tssbnbrunner.DKGRunKey]coretransport.FrameTransport
 	started    int
 	release    chan struct{}
@@ -73,6 +74,7 @@ func newConcurrentDKGRunner(t *testing.T) *concurrentDKGRunner {
 				ECDSAPub:     pub,
 			},
 		},
+		materials:  make(map[tssbnbrunner.ECDSAKeyMaterialKey]coreshares.ECDSAKeyMaterial),
 		transports: make(map[tssbnbrunner.DKGRunKey]coretransport.FrameTransport),
 		release:    make(chan struct{}),
 	}
@@ -114,11 +116,21 @@ func (r *concurrentDKGRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGR
 	return share, nil
 }
 
-func (*concurrentDKGRunner) ExportECDSAKeyMaterial(string) (coreshares.ECDSAKeyMaterial, error) {
-	return coreshares.ECDSAKeyMaterial{}, errShareMissing
+func (r *concurrentDKGRunner) ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	material, ok := r.materials[key]
+	if !ok {
+		return coreshares.ECDSAKeyMaterial{}, errShareMissing
+	}
+	return material, nil
 }
 
-func (*concurrentDKGRunner) ImportECDSAKeyMaterial(string, coreshares.ECDSAKeyMaterial) {}
+func (r *concurrentDKGRunner) ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial) {
+	r.mu.Lock()
+	r.materials[key] = material
+	r.mu.Unlock()
+}
 
 func (r *concurrentDKGRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
 	r.mu.Lock()
@@ -320,6 +332,56 @@ func TestConcurrentDKGServiceIsolatesPartyTransportAndCodecResults(t *testing.T)
 	}
 	if bytes.Equal(bBlob, cBlob) {
 		t.Fatal("B and C codec blobs unexpectedly match")
+	}
+}
+
+func TestConcurrentDKGServiceWithoutWriterPreservesBothPartyMaterials(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	svc := New(runner, newTestLogger(), nil, nil, nil)
+	chainCode := strings.Repeat("11", 32)
+
+	type result struct{ err error }
+	run := func(partyID string) <-chan result {
+		resultCh := make(chan result, 1)
+		go func() {
+			_, err := svc.RunDKGSession(context.Background(), DKGInput{
+				SessionID:    "shared-session",
+				LocalPartyID: partyID,
+				KeyID:        "shared-key",
+				Parties:      []string{"B", "C", "remote"},
+				Threshold:    2,
+				Curve:        "secp256k1",
+				Algorithm:    "ecdsa",
+				DerivationMaterial: DKGDerivationMaterial{
+					ChainCode:        chainCode,
+					DerivationScheme: "bip32_secp256k1",
+				},
+				Transport:   &identifiedTransport{partyID: partyID},
+				MissingPub:  errMissingPublicKey,
+				MissingAddr: errMissingAddress,
+			})
+			resultCh <- result{err: err}
+		}()
+		return resultCh
+	}
+
+	bResultCh, cResultCh := run("B"), run("C")
+	bResult, cResult := <-bResultCh, <-cResultCh
+	if bResult.err != nil || cResult.err != nil {
+		t.Fatalf("concurrent no-writer runs failed: B=%v C=%v", bResult.err, cResult.err)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.materials) != 2 {
+		t.Fatalf("fallback materials = %d, want distinct B and C entries", len(runner.materials))
+	}
+	bMaterial := runner.materials[tssbnbrunner.ECDSAKeyMaterialKey{KeyID: "shared-key", LocalPartyID: "B"}]
+	cMaterial := runner.materials[tssbnbrunner.ECDSAKeyMaterialKey{KeyID: "shared-key", LocalPartyID: "C"}]
+	if bMaterial.Share.Xi == nil || bMaterial.Share.Xi.Cmp(big.NewInt(11)) != 0 {
+		t.Fatalf("B fallback share Xi = %v, want 11", bMaterial.Share.Xi)
+	}
+	if cMaterial.Share.Xi == nil || cMaterial.Share.Xi.Cmp(big.NewInt(22)) != 0 {
+		t.Fatalf("C fallback share Xi = %v, want 22", cMaterial.Share.Xi)
 	}
 }
 

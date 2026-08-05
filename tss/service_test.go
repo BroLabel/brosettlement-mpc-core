@@ -287,16 +287,16 @@ func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(tssbnbrunner.DKGRunKe
 	return ecdsakeygen.LocalPartySaveData{}, ErrShareNotFound
 }
 
-func (r *facadeDerivedRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
-	material, ok := r.materialByKey[key]
+func (r *facadeDerivedRunner) ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error) {
+	material, ok := r.materialByKey[key.KeyID]
 	if !ok {
 		return coreshares.ECDSAKeyMaterial{}, ErrShareNotFound
 	}
 	return material, nil
 }
 
-func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
-	r.materialByKey[key] = material
+func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial) {
+	r.materialByKey[key.KeyID] = material
 }
 
 func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {

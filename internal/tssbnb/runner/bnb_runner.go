@@ -27,11 +27,16 @@ var (
 	ErrECDSAPubKeyUnavailable   = bnbutils.ErrECDSAPubKeyUnavailable
 )
 
+type ECDSAKeyMaterialKey struct {
+	KeyID        string
+	LocalPartyID string
+}
+
 // BnbRunner runs tss-lib protocol loops over abstract frame transport.
 type BnbRunner struct {
 	mu                      sync.RWMutex
 	temporaryECDSADKGShares map[DKGRunKey]ecdsakeygen.LocalPartySaveData
-	ecdsaMaterials          map[string]coreshares.ECDSAKeyMaterial
+	ecdsaMaterials          map[ECDSAKeyMaterialKey]coreshares.ECDSAKeyMaterial
 	ecdsaSigs               map[string]*common.SignatureData
 	logger                  *slog.Logger
 	debug                   bool
@@ -78,7 +83,7 @@ func NewBnbRunner(logger *slog.Logger, opts ...Option) *BnbRunner {
 	}
 	return &BnbRunner{
 		temporaryECDSADKGShares: map[DKGRunKey]ecdsakeygen.LocalPartySaveData{},
-		ecdsaMaterials:          map[string]coreshares.ECDSAKeyMaterial{},
+		ecdsaMaterials:          map[ECDSAKeyMaterialKey]coreshares.ECDSAKeyMaterial{},
 		ecdsaSigs:               map[string]*common.SignatureData{},
 		logger:                  logger,
 		debug:                   bnbutils.IsTSSDebugEnabled(logger),
@@ -173,24 +178,24 @@ func (r *BnbRunner) ExportTemporaryECDSADKGShare(key DKGRunKey) (ecdsakeygen.Loc
 	return data, nil
 }
 
-func (r *BnbRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
-	if key == "" {
+func (r *BnbRunner) ImportECDSAKeyMaterial(key ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial) {
+	if key.KeyID == "" || key.LocalPartyID == "" {
 		return
 	}
 	r.mu.Lock()
 	if r.ecdsaMaterials == nil {
-		r.ecdsaMaterials = map[string]coreshares.ECDSAKeyMaterial{}
+		r.ecdsaMaterials = map[ECDSAKeyMaterialKey]coreshares.ECDSAKeyMaterial{}
 	}
 	r.ecdsaMaterials[key] = cloneECDSAKeyMaterial(material)
 	r.mu.Unlock()
 }
 
-func (r *BnbRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
+func (r *BnbRunner) ExportECDSAKeyMaterial(key ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	material, ok := r.ecdsaMaterials[key]
 	if !ok {
-		return coreshares.ECDSAKeyMaterial{}, fmt.Errorf("%w: key=%s", ErrKeyShareNotFound, key)
+		return coreshares.ECDSAKeyMaterial{}, fmt.Errorf("%w: key=%s party=%s", ErrKeyShareNotFound, key.KeyID, key.LocalPartyID)
 	}
 	return cloneECDSAKeyMaterial(material), nil
 }
@@ -238,11 +243,21 @@ func (r *BnbRunner) getTemporaryECDSADKGShare(key DKGRunKey) (ecdsakeygen.LocalP
 func (r *BnbRunner) getECDSAKeyMaterialShare(key string) (ecdsakeygen.LocalPartySaveData, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	material, ok := r.ecdsaMaterials[key]
-	if !ok {
+	var found *coreshares.ECDSAKeyMaterial
+	for materialKey, material := range r.ecdsaMaterials {
+		if materialKey.KeyID != key {
+			continue
+		}
+		if found != nil {
+			return ecdsakeygen.LocalPartySaveData{}, false
+		}
+		copy := material
+		found = &copy
+	}
+	if found == nil {
 		return ecdsakeygen.LocalPartySaveData{}, false
 	}
-	return material.Share, true
+	return found.Share, true
 }
 
 func (r *BnbRunner) setECDSASignature(key string, data *common.SignatureData) {

@@ -248,8 +248,11 @@ func (r *BnbRunner) getECDSAKeyMaterialShare(key string) (ecdsakeygen.LocalParty
 		if materialKey.KeyID != key {
 			continue
 		}
-		if found != nil {
+		if found != nil && !sameECDSAPublicPoint(found.Share, material.Share) {
 			return ecdsakeygen.LocalPartySaveData{}, false
+		}
+		if found != nil {
+			continue
 		}
 		copy := material
 		found = &copy
@@ -258,6 +261,26 @@ func (r *BnbRunner) getECDSAKeyMaterialShare(key string) (ecdsakeygen.LocalParty
 		return ecdsakeygen.LocalPartySaveData{}, false
 	}
 	return found.Share, true
+}
+
+func sameECDSAPublicPoint(left, right ecdsakeygen.LocalPartySaveData) bool {
+	if left.ECDSAPub == nil || right.ECDSAPub == nil {
+		return left.ECDSAPub == nil && right.ECDSAPub == nil
+	}
+	leftPublicKey := left.ECDSAPub.ToECDSAPubKey()
+	rightPublicKey := right.ECDSAPub.ToECDSAPubKey()
+	if leftPublicKey == nil || rightPublicKey == nil ||
+		leftPublicKey.Curve == nil || rightPublicKey.Curve == nil ||
+		leftPublicKey.X == nil || rightPublicKey.X == nil ||
+		leftPublicKey.Y == nil || rightPublicKey.Y == nil {
+		return false
+	}
+	leftParams := leftPublicKey.Curve.Params()
+	rightParams := rightPublicKey.Curve.Params()
+	return leftParams != nil && rightParams != nil &&
+		leftParams.Name == rightParams.Name &&
+		leftPublicKey.X.Cmp(rightPublicKey.X) == 0 &&
+		leftPublicKey.Y.Cmp(rightPublicKey.Y) == 0
 }
 
 func (r *BnbRunner) setECDSASignature(key string, data *common.SignatureData) {

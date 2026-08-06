@@ -12,7 +12,9 @@ import (
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
+	tsscrypto "github.com/bnb-chain/tss-lib/crypto"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
 
 type testMetrics struct{}
@@ -129,5 +131,51 @@ func TestDeleteTemporaryECDSADKGSharePreservesKeyMaterial(t *testing.T) {
 	}
 	if _, err := runner.ExportECDSAKeyMaterial(materialKey); err != nil {
 		t.Fatalf("expected key material to remain, got %v", err)
+	}
+}
+
+func TestECDSAAddressAcceptsDualLocalSharesWithCommonPublicPoint(t *testing.T) {
+	runner := NewBnbRunner(slog.Default())
+	publicPoint := tsscrypto.ScalarBaseMult(tsslib.S256(), big.NewInt(1))
+	if publicPoint == nil {
+		t.Fatal("create test public point")
+	}
+	material := coreshares.ECDSAKeyMaterial{
+		Share: ecdsakeygen.LocalPartySaveData{ECDSAPub: publicPoint},
+	}
+	runner.ImportECDSAKeyMaterial(ECDSAKeyMaterialKey{KeyID: "key-1", LocalPartyID: "party-b"}, material)
+	runner.ImportECDSAKeyMaterial(ECDSAKeyMaterialKey{KeyID: "key-1", LocalPartyID: "party-c"}, material)
+
+	address, err := runner.ECDSAAddress("key-1")
+	if err != nil {
+		t.Fatalf("ECDSAAddress() error = %v", err)
+	}
+	if address == "" {
+		t.Fatal("ECDSAAddress() returned an empty address")
+	}
+}
+
+func TestECDSAAddressRejectsDualLocalSharesWithDifferentPublicPoints(t *testing.T) {
+	runner := NewBnbRunner(slog.Default())
+	for _, localParty := range []struct {
+		id     string
+		scalar int64
+	}{
+		{id: "party-b", scalar: 1},
+		{id: "party-c", scalar: 2},
+	} {
+		publicPoint := tsscrypto.ScalarBaseMult(tsslib.S256(), big.NewInt(localParty.scalar))
+		if publicPoint == nil {
+			t.Fatalf("create test public point for %s", localParty.id)
+		}
+		runner.ImportECDSAKeyMaterial(
+			ECDSAKeyMaterialKey{KeyID: "key-1", LocalPartyID: localParty.id},
+			coreshares.ECDSAKeyMaterial{Share: ecdsakeygen.LocalPartySaveData{ECDSAPub: publicPoint}},
+		)
+	}
+
+	_, err := runner.ECDSAAddress("key-1")
+	if !errors.Is(err, ErrKeyShareNotFound) {
+		t.Fatalf("ECDSAAddress() error = %v, want ErrKeyShareNotFound", err)
 	}
 }

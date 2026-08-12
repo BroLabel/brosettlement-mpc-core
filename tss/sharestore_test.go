@@ -2,8 +2,12 @@ package tss
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
+
+	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 )
 
 func TestShareCapabilitiesExposeOnlyTheirOwnOperations(t *testing.T) {
@@ -40,6 +44,16 @@ func TestSaveShareInputContainsOnlyGenericPersistenceContext(t *testing.T) {
 		if field.Name != expected.name || field.Type != expected.typ {
 			t.Fatalf("field %d = %s %s, want %s %s", index, field.Name, field.Type, expected.name, expected.typ)
 		}
+	}
+}
+
+func TestMetadataMismatchSentinelAliasesCoreError(t *testing.T) {
+	if ErrMetadataMismatch != coreshares.ErrMetadataMismatch {
+		t.Fatal("ErrMetadataMismatch does not preserve core error identity")
+	}
+	wrapped := fmt.Errorf("descriptor binding failed: %w", coreshares.ErrMetadataMismatch)
+	if !errors.Is(wrapped, ErrMetadataMismatch) {
+		t.Fatal("ErrMetadataMismatch does not match a wrapped core binding error")
 	}
 }
 

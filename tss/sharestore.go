@@ -5,6 +5,7 @@ import coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 var (
 	ErrShareNotFound       = coreshares.ErrShareNotFound
 	ErrInvalidSharePayload = coreshares.ErrInvalidSharePayload
+	ErrMetadataMismatch    = coreshares.ErrMetadataMismatch
 	ErrUnsupportedVersion  = coreshares.ErrUnsupportedVersion
 )
 

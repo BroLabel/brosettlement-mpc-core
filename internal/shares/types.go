@@ -8,6 +8,7 @@ import (
 var (
 	ErrShareNotFound       = errors.New("platform share not found")
 	ErrInvalidSharePayload = errors.New("invalid platform share payload")
+	ErrMetadataMismatch    = errors.New("platform share metadata mismatch")
 	ErrUnsupportedVersion  = errors.New("unsupported platform share version")
 )
 

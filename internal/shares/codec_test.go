@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
+	"math/big"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,6 +40,32 @@ func TestMarshalUnmarshalKeyMaterialRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(decoded, original) {
 		t.Fatal("decoded material mismatch")
+	}
+}
+
+func TestMarshalKeyMaterialRejectsUnsupportedMaterialFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ECDSAKeyMaterial)
+	}{
+		{name: "chain code length", mutate: func(material *ECDSAKeyMaterial) { material.ChainCode = []byte{0x11} }},
+		{name: "public key format", mutate: func(material *ECDSAKeyMaterial) { material.PublicKeyFormat = "compressed_hex" }},
+		{name: "derivation scheme", mutate: func(material *ECDSAKeyMaterial) { material.DerivationScheme = "slip10_ed25519" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			material := codecV2GoldenMaterial()
+			tt.mutate(&material)
+
+			blob, err := MarshalKeyMaterial(material)
+			if !errors.Is(err, ErrInvalidSharePayload) {
+				t.Fatalf("MarshalKeyMaterial() error = %v, want ErrInvalidSharePayload", err)
+			}
+			if blob != nil {
+				t.Fatalf("MarshalKeyMaterial() blob length = %d, want nil", len(blob))
+			}
+		})
 	}
 }
 
@@ -82,16 +109,18 @@ func TestCodecV2AcceptsBlobAtLimit(t *testing.T) {
 }
 
 func TestCodecV2RejectsBlobOverLimit(t *testing.T) {
-	material, blob := codecV2BlobAtSize(t, maxKeyMaterialBlobBytes+1)
+	material := codecV2GoldenMaterial()
+	material.Share.Xi = new(big.Int).SetBytes(bytes.Repeat([]byte{0xff}, maxKeyMaterialBlobBytes+1))
 
 	_, err := MarshalKeyMaterial(material)
-	if !errors.Is(err, ErrInvalidSharePayload) {
-		t.Fatalf("MarshalKeyMaterial() error = %v, want ErrInvalidSharePayload for an oversized blob", err)
+	if !errors.Is(err, ErrInvalidSharePayload) || !strings.Contains(err.Error(), "blob exceeds") {
+		t.Fatalf("MarshalKeyMaterial() error = %v, want oversized ErrInvalidSharePayload", err)
 	}
 
+	blob := make([]byte, maxKeyMaterialBlobBytes+1)
 	_, err = UnmarshalKeyMaterial(blob)
-	if !errors.Is(err, ErrInvalidSharePayload) {
-		t.Fatalf("UnmarshalKeyMaterial() error = %v, want ErrInvalidSharePayload for an oversized blob", err)
+	if !errors.Is(err, ErrInvalidSharePayload) || !strings.Contains(err.Error(), "blob exceeds") {
+		t.Fatalf("UnmarshalKeyMaterial() error = %v, want oversized ErrInvalidSharePayload", err)
 	}
 }
 
@@ -207,26 +236,6 @@ func TestCopyAndClearBytesClearsDecoderOwnedChainCodeAfterCopy(t *testing.T) {
 	if !bytes.Equal(decoderOwnedChainCode, make([]byte, len(decoderOwnedChainCode))) {
 		t.Fatal("copyAndClearBytes() did not clear the decoder-owned chain code")
 	}
-}
-
-func codecV2BlobAtSize(t *testing.T, target int) (ECDSAKeyMaterial, []byte) {
-	t.Helper()
-	for low, high := 0, target; low <= high; {
-		formatLength := low + (high-low)/2
-		material := codecV2GoldenMaterial()
-		material.PublicKeyFormat = strings.Repeat("x", formatLength)
-		blob := encodeCodecV2Envelope(t, material)
-		switch {
-		case len(blob) == target:
-			return material, blob
-		case len(blob) < target:
-			low = formatLength + 1
-		default:
-			high = formatLength - 1
-		}
-	}
-	t.Fatalf("no non-secret codec-v2 material encodes to %d bytes", target)
-	return ECDSAKeyMaterial{}, nil
 }
 
 func encodeCodecV2Envelope(t *testing.T, material ECDSAKeyMaterial) []byte {

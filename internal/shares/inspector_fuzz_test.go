@@ -19,8 +19,10 @@ func FuzzInspectEncodedECDSAKeyMaterial(f *testing.F) {
 		f.Fatal("create secp256k1 fuzz seed point")
 	}
 	validBlob, err := MarshalKeyMaterial(ECDSAKeyMaterial{
-		Share:     ecdsakeygen.LocalPartySaveData{ECDSAPub: point},
-		ChainCode: bytes.Repeat([]byte{0x42}, 32),
+		Share:            ecdsakeygen.LocalPartySaveData{ECDSAPub: point},
+		ChainCode:        bytes.Repeat([]byte{0x42}, 32),
+		PublicKeyFormat:  codecPublicKeyFormat,
+		DerivationScheme: codecDerivationScheme,
 	})
 	if err != nil {
 		f.Fatalf("marshal valid fuzz seed: %v", err)

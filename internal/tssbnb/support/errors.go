@@ -11,5 +11,4 @@ var (
 	ErrKeyShareNotFound         = errors.New("ecdsa key share not found")
 	ErrSignDigestRequired       = errors.New("sign digest is required")
 	ErrSignAlgorithmUnsupported = errors.New("sign supports only ecdsa")
-	ErrECDSAPubKeyUnavailable   = errors.New("ecdsa public key is unavailable")
 )

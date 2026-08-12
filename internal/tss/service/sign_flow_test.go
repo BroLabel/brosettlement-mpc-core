@@ -57,9 +57,17 @@ func newDerivedECDSAStubRunner(t *testing.T, keyID string) *stubRunner {
 	}
 }
 
-func TestRunSignSession_PreparesDerivedECDSAShareBeforeRunnerStart(t *testing.T) {
+func shareReaderForMaterial(t *testing.T, material coreshares.ECDSAKeyMaterial) ShareReader {
+	t.Helper()
+	blob, err := coreshares.MarshalKeyMaterial(material)
+	if err != nil {
+		t.Fatalf("MarshalKeyMaterial() error = %v", err)
+	}
+	return staticShareReader{stored: &coreshares.StoredShare{Blob: blob}}
+}
+
+func TestRunSignSession_RequiresShareReaderBeforeRunnerStart(t *testing.T) {
 	runner := newDerivedECDSAStubRunner(t, "key-1")
-	runner.requireShareForSign = true
 	hash, err := corederivation.HashV1(validServiceDerivationContext())
 	if err != nil {
 		t.Fatalf("HashV1 returned error: %v", err)
@@ -78,78 +86,48 @@ func TestRunSignSession_PreparesDerivedECDSAShareBeforeRunnerStart(t *testing.T)
 		DerivationContext:     validServiceDerivationContext(),
 		DerivationContextHash: hash,
 		EmptyKeyErr:           errShareMissing,
-		MetadataMismatch:      errShareMissing,
+	})
+	if !errors.Is(err, ErrShareReaderRequired) {
+		t.Fatalf("RunSignSession() error = %v, want ErrShareReaderRequired", err)
+	}
+	if runner.lastSignJob.SessionID != "" {
+		t.Fatalf("runner started unexpectedly: %+v", runner.lastSignJob)
+	}
+}
+
+func TestRunSignSession_PreparesDerivedECDSAShareLoadedByReader(t *testing.T) {
+	runner := newDerivedECDSAStubRunner(t, "key-1")
+	reader := shareReaderForMaterial(t, runner.materialByKey["key-1"])
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, reader, nil)
+	hash, err := corederivation.HashV1(validServiceDerivationContext())
+	if err != nil {
+		t.Fatalf("HashV1() error = %v", err)
+	}
+
+	err = svc.RunSignSession(context.Background(), SignInput{
+		SessionID:             "sign-1",
+		LocalPartyID:          "p1",
+		OrgID:                 "org",
+		KeyID:                 "key-1",
+		Parties:               []string{"p1", "p2"},
+		Digest:                []byte{1, 2, 3},
+		Algorithm:             "ecdsa",
+		Curve:                 "secp256k1",
+		DerivationContext:     validServiceDerivationContext(),
+		DerivationContextHash: hash,
+		EmptyKeyErr:           errShareMissing,
 	})
 	if err != nil {
-		t.Fatalf("RunSignSession returned error: %v", err)
+		t.Fatalf("RunSignSession() error = %v", err)
 	}
 	if runner.lastSignJob.KeyDerivationDelta == nil {
-		t.Fatal("expected runner sign job to receive key derivation delta")
-	}
-	if runner.lastSignJob.DerivationContextHash != hash {
-		t.Fatalf("DerivationContextHash = %q", runner.lastSignJob.DerivationContextHash)
-	}
-}
-
-func TestRunSignSession_MissingChainCodeFailsBeforeRunnerStart(t *testing.T) {
-	runner := newDerivedECDSAStubRunner(t, "key-1")
-	material := runner.materialByKey["key-1"]
-	material.ChainCode = nil
-	runner.materialByKey["key-1"] = material
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
-
-	err := svc.RunSignSession(context.Background(), SignInput{
-		SessionID:         "sign-1",
-		LocalPartyID:      "p1",
-		OrgID:             "org",
-		KeyID:             "key-1",
-		Parties:           []string{"p1", "p2"},
-		Digest:            []byte{1, 2, 3},
-		Algorithm:         "ecdsa",
-		Curve:             "secp256k1",
-		DerivationContext: validServiceDerivationContext(),
-		EmptyKeyErr:       errShareMissing,
-		MetadataMismatch:  errShareMissing,
-	})
-	if !errors.Is(err, corederivation.ErrChainCodeMissing) {
-		t.Fatalf("expected ErrChainCodeMissing, got %v", err)
-	}
-	if runner.lastSignJob.SessionID != "" {
-		t.Fatalf("runner started unexpectedly: %+v", runner.lastSignJob)
-	}
-}
-
-func TestRunSignSession_WrongLengthChainCodeMapsToMissingBeforeRunnerStart(t *testing.T) {
-	runner := newDerivedECDSAStubRunner(t, "key-1")
-	material := runner.materialByKey["key-1"]
-	material.ChainCode = []byte{0x11}
-	runner.materialByKey["key-1"] = material
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
-
-	err := svc.RunSignSession(context.Background(), SignInput{
-		SessionID:         "sign-1",
-		LocalPartyID:      "p1",
-		OrgID:             "org",
-		KeyID:             "key-1",
-		Parties:           []string{"p1", "p2"},
-		Digest:            []byte{1, 2, 3},
-		Algorithm:         "ecdsa",
-		Curve:             "secp256k1",
-		DerivationContext: validServiceDerivationContext(),
-		EmptyKeyErr:       errShareMissing,
-		MetadataMismatch:  errShareMissing,
-	})
-	if !errors.Is(err, corederivation.ErrChainCodeMissing) {
-		t.Fatalf("expected ErrChainCodeMissing, got %v", err)
-	}
-	if runner.lastSignJob.SessionID != "" {
-		t.Fatalf("runner started unexpectedly: %+v", runner.lastSignJob)
+		t.Fatal("runner did not receive the derived share")
 	}
 }
 
 func TestRunSignSession_DerivationContextHashMismatchFailsBeforeRunnerStart(t *testing.T) {
 	runner := newDerivedECDSAStubRunner(t, "key-1")
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, nil, nil)
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, shareReaderForMaterial(t, runner.materialByKey["key-1"]), nil)
 
 	err := svc.RunSignSession(context.Background(), SignInput{
 		SessionID:             "sign-1",
@@ -163,47 +141,9 @@ func TestRunSignSession_DerivationContextHashMismatchFailsBeforeRunnerStart(t *t
 		DerivationContext:     validServiceDerivationContext(),
 		DerivationContextHash: "not-the-normalized-context-hash",
 		EmptyKeyErr:           errShareMissing,
-		MetadataMismatch:      errShareMissing,
 	})
 	if !errors.Is(err, corederivation.ErrDerivationContextMismatch) {
 		t.Fatalf("expected ErrDerivationContextMismatch, got %v", err)
-	}
-	if runner.lastSignJob.SessionID != "" {
-		t.Fatalf("runner started unexpectedly: %+v", runner.lastSignJob)
-	}
-}
-
-func TestRunSignSession_CurveMetadataMismatchFailsBeforeRunnerStart(t *testing.T) {
-	runner := newDerivedECDSAStubRunner(t, "key-1")
-	material := runner.materialByKey["key-1"]
-	blob, err := coreshares.MarshalKeyMaterial(material)
-	if err != nil {
-		t.Fatalf("MarshalKeyMaterial returned error: %v", err)
-	}
-	reader := staticShareReader{stored: &coreshares.StoredShare{
-		Blob: blob,
-		Meta: coreshares.ShareMeta{
-			Algorithm: "ecdsa",
-			Curve:     "p256",
-		},
-	}}
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{}, reader, nil)
-
-	err = svc.RunSignSession(context.Background(), SignInput{
-		SessionID:         "sign-1",
-		LocalPartyID:      "p1",
-		OrgID:             "org",
-		KeyID:             "key-1",
-		Parties:           []string{"p1", "p2"},
-		Digest:            []byte{1, 2, 3},
-		Algorithm:         "ecdsa",
-		Curve:             "secp256k1",
-		DerivationContext: validServiceDerivationContext(),
-		EmptyKeyErr:       errShareMissing,
-		MetadataMismatch:  errShareMissing,
-	})
-	if !errors.Is(err, errShareMissing) {
-		t.Fatalf("expected metadata mismatch, got %v", err)
 	}
 	if runner.lastSignJob.SessionID != "" {
 		t.Fatalf("runner started unexpectedly: %+v", runner.lastSignJob)

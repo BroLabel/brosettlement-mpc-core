@@ -95,6 +95,29 @@ func TestDKGSessionRequestValidateRequiresECDSAKeyID(t *testing.T) {
 	}
 }
 
+func TestDKGSessionRequestValidateRejectsUnsupportedAlgorithmCurveAndMaterial(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*DKGSessionRequest)
+	}{
+		{name: "algorithm", mutate: func(req *DKGSessionRequest) { req.Session.Algorithm = "rsa" }},
+		{name: "curve", mutate: func(req *DKGSessionRequest) { req.Session.Curve = "p256" }},
+		{name: "material", mutate: func(req *DKGSessionRequest) { req.DerivationMaterial.DerivationScheme = "slip10_ed25519" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := validDKGRequestWithMaterial()
+			tt.mutate(&req)
+
+			err := req.Validate()
+			if !errors.Is(err, ErrUnsupportedAlgorithmCurve) && !errors.Is(err, ErrUnsupportedDerivationScheme) {
+				t.Fatalf("Validate() error = %v, want unsupported algorithm/curve/material error", err)
+			}
+		})
+	}
+}
+
 func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 	req := SignSessionRequest{
 		Session: SignSessionDescriptor{
@@ -116,7 +139,7 @@ func TestSignSessionRequestValidateRequiresDigest(t *testing.T) {
 
 func TestRunSignSession_NormalizesAndHashesDerivationContextBeforeInternalService(t *testing.T) {
 	runner := newFacadeDerivedRunner(t, "key-1")
-	svc := newService(runner, slog.Default(), nil, nil, nil, nil)
+	svc := newService(runner, slog.Default(), nil, facadeReaderForRunner(t, runner, "key-1"), nil, nil)
 	ctx := validFacadeDerivationContext()
 	ctx.Algorithm = " ECDSA "
 	ctx.Curve = " SECP256K1 "
@@ -287,24 +310,25 @@ func (r *facadeDerivedRunner) ExportTemporaryECDSADKGShare(tssbnbrunner.DKGRunKe
 	return ecdsakeygen.LocalPartySaveData{}, ErrShareNotFound
 }
 
-func (r *facadeDerivedRunner) ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error) {
-	material, ok := r.materialByKey[key.KeyID]
-	if !ok {
-		return coreshares.ECDSAKeyMaterial{}, ErrShareNotFound
-	}
-	return material, nil
-}
-
-func (r *facadeDerivedRunner) ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial) {
-	r.materialByKey[key.KeyID] = material
-}
-
 func (r *facadeDerivedRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
 	delete(r.materialByKey, key.SessionID)
 }
 
-func (r *facadeDerivedRunner) ECDSAAddress(string) (string, error) {
-	return "", nil
+type facadeShareReader struct {
+	stored *StoredShare
+}
+
+func (r facadeShareReader) LoadShare(context.Context, string) (*StoredShare, error) {
+	return r.stored, nil
+}
+
+func facadeReaderForRunner(t *testing.T, runner *facadeDerivedRunner, keyID string) ShareReader {
+	t.Helper()
+	blob, err := MarshalKeyMaterial(runner.materialByKey[keyID])
+	if err != nil {
+		t.Fatalf("MarshalKeyMaterial() error = %v", err)
+	}
+	return facadeShareReader{stored: &StoredShare{Blob: blob}}
 }
 
 func TestNewBnbServiceReturnsFacade(t *testing.T) {
@@ -363,8 +387,8 @@ func TestRunDKGSessionWithPreParamsRejectsInvalidAndForeignPublicHandles(t *test
 	sourceB := &sourceStub{value: &ecdsakeygen.LocalPreParams{}}
 	runnerA := newFacadeDerivedRunner(t, request.Session.KeyID)
 	runnerB := newFacadeDerivedRunner(t, request.Session.KeyID)
-	serviceA := newService(runnerA, slog.Default(), nil, nil, nil, sourceA)
-	serviceB := newService(runnerB, slog.Default(), nil, nil, nil, sourceB)
+	serviceA := newService(runnerA, slog.Default(), nil, nil, stubShareWriter{}, sourceA)
+	serviceB := newService(runnerB, slog.Default(), nil, nil, stubShareWriter{}, sourceB)
 
 	owned, err := serviceA.AcquireDKGPreParams(context.Background())
 	if err != nil {
@@ -402,7 +426,7 @@ func TestRunDKGSessionWithPreParamsConsumesPublicHandle(t *testing.T) {
 	material := &ecdsakeygen.LocalPreParams{}
 	source := &sourceStub{value: material}
 	runner := newFacadeDerivedRunner(t, request.Session.KeyID)
-	service := newService(runner, slog.Default(), nil, nil, nil, source)
+	service := newService(runner, slog.Default(), nil, nil, stubShareWriter{}, source)
 
 	handle, err := service.AcquireDKGPreParams(context.Background())
 	if err != nil {
@@ -497,11 +521,9 @@ func (p *refillControlPoolStub) Snapshot() preparams.Snapshot {
 func TestServiceExposesGenericPreParamsRefillControlsAndMetrics(t *testing.T) {
 	pool := &refillControlPoolStub{
 		snapshot: preparams.Snapshot{
-			Size:              2,
-			InFlight:          1,
-			RefillPaused:      true,
-			RefillPauseCount:  2,
-			RefillResumeCount: 1,
+			Size:         2,
+			InFlight:     1,
+			RefillPaused: true,
 		},
 	}
 	runner := newFacadeDerivedRunner(t, "key-1")
@@ -516,9 +538,6 @@ func TestServiceExposesGenericPreParamsRefillControlsAndMetrics(t *testing.T) {
 	want := Snapshot{
 		PreParamsPoolSize:           2,
 		PreParamsGenerationInFlight: 1,
-		PreParamsRefillPaused:       true,
-		PreParamsRefillPauseCount:   2,
-		PreParamsRefillResumeCount:  1,
 	}
 	if got := service.Snapshot(); got != want {
 		t.Fatalf("Snapshot() = %+v, want %+v", got, want)

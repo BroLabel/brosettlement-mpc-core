@@ -13,8 +13,10 @@ import (
 )
 
 var (
-	ErrNilRunner       = errors.New("runner is required")
-	ErrDuplicateDKGRun = errors.New("duplicate dkg run")
+	ErrNilRunner           = errors.New("runner is required")
+	ErrDuplicateDKGRun     = errors.New("duplicate dkg run")
+	ErrShareReaderRequired = errors.New("share reader is required")
+	ErrShareWriterRequired = errors.New("share writer is required")
 )
 
 type Runner interface {
@@ -22,10 +24,7 @@ type Runner interface {
 	RunSign(ctx context.Context, job tssbnbrunner.SignJob, transport coretransport.FrameTransport) error
 	ExportECDSASignature(key string) (common.SignatureData, error)
 	ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error)
-	ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error)
-	ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial)
 	DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey)
-	ECDSAAddress(key string) (string, error)
 }
 
 type ShareReader = coreshares.ShareReader
@@ -88,5 +87,4 @@ type SignInput struct {
 	DerivationContextHash string
 	Transport             coretransport.FrameTransport
 	EmptyKeyErr           error
-	MetadataMismatch      error
 }

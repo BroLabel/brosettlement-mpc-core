@@ -173,7 +173,9 @@ func inspectableECDSAKeyMaterialBlob(t *testing.T, point *tsscrypto.ECPoint, cha
 		Version: codecVersion,
 		Share:   ecdsakeygen.LocalPartySaveData{ECDSAPub: point},
 		Meta: KeyMaterialMeta{
-			ChainCode: bytes.Repeat([]byte{0x42}, chainCodeLength),
+			ChainCode:        bytes.Repeat([]byte{0x42}, chainCodeLength),
+			PublicKeyFormat:  "uncompressed_hex",
+			DerivationScheme: "bip32_secp256k1",
 		},
 	})
 	if err != nil {

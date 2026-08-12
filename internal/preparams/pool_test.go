@@ -264,8 +264,8 @@ func TestPoolRefillPauseDuringTwoActiveRuntimesAndIdempotentResume(t *testing.T)
 		}
 	}
 	paused := pool.Snapshot()
-	if !paused.RefillPaused || paused.RefillPauseCount != 1 || paused.RefillResumeCount != 0 {
-		t.Fatalf("paused refill metrics = %+v, want one pause transition", paused)
+	if !paused.RefillPaused {
+		t.Fatalf("paused refill state = %+v, want paused", paused)
 	}
 	if paused.Size != 0 || paused.InFlight != 0 || paused.GenerationsSuccess != 2 {
 		t.Fatalf("paused generation metrics = %+v, want empty idle pool", paused)
@@ -287,8 +287,8 @@ func TestPoolRefillPauseDuringTwoActiveRuntimesAndIdempotentResume(t *testing.T)
 	})
 
 	resumed := pool.Snapshot()
-	if resumed.RefillPaused || resumed.RefillPauseCount != 1 || resumed.RefillResumeCount != 1 {
-		t.Fatalf("resumed refill metrics = %+v, want one resume transition", resumed)
+	if resumed.RefillPaused {
+		t.Fatalf("resumed refill state = %+v, want active", resumed)
 	}
 	if resumed.GenerationsSuccess != 4 || calls.Load() != 4 {
 		t.Fatalf("generation transitions after resume = success:%d calls:%d, want 4:4",

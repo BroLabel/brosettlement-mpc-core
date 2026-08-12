@@ -34,8 +34,6 @@ type Snapshot struct {
 	SyncFallbackCount  uint64
 	LastGenerateNanos  int64
 	RefillPaused       bool
-	RefillPauseCount   uint64
-	RefillResumeCount  uint64
 }
 
 type item struct {
@@ -77,8 +75,6 @@ type Pool struct {
 	poolEmpty         atomic.Uint64
 	syncFallback      atomic.Uint64
 	lastGenerateNanos atomic.Int64
-	refillPauses      atomic.Uint64
-	refillResumes     atomic.Uint64
 }
 
 func NewPool(logger *slog.Logger, cfg Config) *Pool {
@@ -266,8 +262,6 @@ func (p *Pool) Snapshot() Snapshot {
 		SyncFallbackCount:  p.syncFallback.Load(),
 		LastGenerateNanos:  p.lastGenerateNanos.Load(),
 		RefillPaused:       p.refillPaused.Load(),
-		RefillPauseCount:   p.refillPauses.Load(),
-		RefillResumeCount:  p.refillResumes.Load(),
 	}
 }
 
@@ -276,9 +270,7 @@ func (p *Pool) Snapshot() Snapshot {
 func (p *Pool) PauseRefill() {
 	p.refillMu.Lock()
 	defer p.refillMu.Unlock()
-	if p.refillPaused.CompareAndSwap(false, true) {
-		p.refillPauses.Add(1)
-	}
+	p.refillPaused.CompareAndSwap(false, true)
 }
 
 // ResumeRefill re-enables background generation and asynchronously fills any
@@ -286,9 +278,6 @@ func (p *Pool) PauseRefill() {
 func (p *Pool) ResumeRefill() {
 	p.refillMu.Lock()
 	resumed := p.refillPaused.CompareAndSwap(true, false)
-	if resumed {
-		p.refillResumes.Add(1)
-	}
 	p.refillMu.Unlock()
 	if resumed {
 		p.signalRefill()

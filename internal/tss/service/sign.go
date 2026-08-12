@@ -6,16 +6,15 @@ import (
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
-	tssruntime "github.com/BroLabel/brosettlement-mpc-core/internal/tss/runtime"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 )
 
-func prepareDerivedECDSASignJob(ctx context.Context, shareReader ShareReader, runner Runner, job tssbnbrunner.SignJob, in SignInput) (tssbnbrunner.SignJob, error) {
+func prepareDerivedECDSASignJob(ctx context.Context, shareReader ShareReader, job tssbnbrunner.SignJob, in SignInput) (tssbnbrunner.SignJob, error) {
 	if !tssutils.IsECDSA(job.Algorithm) {
 		return job, corederivation.ErrDerivedSigningUnsupported
 	}
-	material, err := loadECDSAKeyMaterial(ctx, shareReader, runner, in)
+	material, err := loadECDSAKeyMaterial(ctx, shareReader, in)
 	if err != nil {
 		return job, err
 	}
@@ -45,18 +44,15 @@ func prepareDerivedECDSASignJob(ctx context.Context, shareReader ShareReader, ru
 	return job, nil
 }
 
-func loadECDSAKeyMaterial(ctx context.Context, shareReader ShareReader, runner Runner, in SignInput) (coreshares.ECDSAKeyMaterial, error) {
+func loadECDSAKeyMaterial(ctx context.Context, shareReader ShareReader, in SignInput) (coreshares.ECDSAKeyMaterial, error) {
 	keyID, err := tssutils.NormalizeKeyID(in.KeyID, in.EmptyKeyErr)
 	if err != nil {
 		return coreshares.ECDSAKeyMaterial{}, err
 	}
 	if shareReader == nil {
-		return runner.ExportECDSAKeyMaterial(tssbnbrunner.ECDSAKeyMaterialKey{KeyID: keyID, LocalPartyID: in.LocalPartyID})
+		return coreshares.ECDSAKeyMaterial{}, ErrShareReaderRequired
 	}
 	stored, err := shareReader.LoadShare(ctx, keyID)
-	if err == nil {
-		err = tssruntime.ValidateLoadedMeta(in.Algorithm, in.Curve, stored.Meta, in.MetadataMismatch)
-	}
 	if err != nil {
 		return coreshares.ECDSAKeyMaterial{}, err
 	}

@@ -77,6 +77,9 @@ func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 	if env.Version != codecVersion {
 		return ECDSAKeyMaterial{}, fmt.Errorf("%w: got=%d expected=%d", ErrUnsupportedVersion, env.Version, codecVersion)
 	}
+	if len(env.Meta.ChainCode) != 32 || env.Meta.PublicKeyFormat != "uncompressed_hex" || env.Meta.DerivationScheme != "bip32_secp256k1" {
+		return ECDSAKeyMaterial{}, fmt.Errorf("%w: unsupported key material metadata", ErrInvalidSharePayload)
+	}
 	return ECDSAKeyMaterial{
 		Share:            env.Share,
 		ChainCode:        copyAndClearBytes(env.Meta.ChainCode),

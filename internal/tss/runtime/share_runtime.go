@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
-	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
@@ -64,24 +63,6 @@ func DeriveECDSAOutputFromShare(share ecdsakeygen.LocalPartySaveData, missingPub
 		PublicKey: pub,
 		Address:   address,
 	}, nil
-}
-
-func ValidateLoadedMeta(algorithm, curve string, meta coreshares.ShareMeta, metadataMismatchErr error) error {
-	alg := strings.ToLower(strings.TrimSpace(algorithm))
-	if alg == "" {
-		alg = "ecdsa"
-	}
-	if meta.Algorithm != "" && !strings.EqualFold(meta.Algorithm, alg) {
-		return metadataMismatchErr
-	}
-	expectedCurve := strings.ToLower(strings.TrimSpace(curve))
-	if expectedCurve == "" && alg == "ecdsa" {
-		expectedCurve = corederivation.CurveSecp256k1
-	}
-	if meta.Curve != "" && !strings.EqualFold(meta.Curve, expectedCurve) {
-		return metadataMismatchErr
-	}
-	return nil
 }
 
 func extractECDSAPublicKey(share ecdsakeygen.LocalPartySaveData) string {

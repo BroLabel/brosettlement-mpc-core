@@ -124,6 +124,9 @@ func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, in DKGInput, h
 }
 
 func (s *Service) runDKGSession(ctx context.Context, in DKGInput, suppliedPreParams *ecdsakeygen.LocalPreParams, hasSuppliedPreParams bool) (DKGOutput, error) {
+	if tssutils.IsECDSA(in.Algorithm) && s.shareWriter == nil {
+		return DKGOutput{}, ErrShareWriterRequired
+	}
 	job := buildDKGJob(in)
 	runKey := tssbnbrunner.DKGRunKey{SessionID: job.SessionID, LocalPartyID: job.LocalPartyID}
 	if !s.beginDKGRun(runKey) {
@@ -171,7 +174,6 @@ func (s *Service) runDKGSession(ctx context.Context, in DKGInput, suppliedPrePar
 		logEnd(err)
 		return DKGOutput{}, err
 	}
-	importNoStoreECDSAKeyMaterial(s.runner, s.shareWriter, runKey, keyID, share, material)
 	if err = persistECDSAShareAfterDKG(ctx, s.shareWriter, s.runner, runKey, keyID, in.OpaqueDescriptorFingerprint, share, material); err != nil {
 		logEnd(err)
 		return DKGOutput{}, err
@@ -212,7 +214,7 @@ func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 	tsslogging.LogSessionStart(s.logger, "sign", in.SessionID, in.OrgID, in.KeyID, in.LocalPartyID)
 	started := time.Now()
 	var err error
-	job, err = prepareDerivedECDSASignJob(ctx, s.shareReader, s.runner, job, in)
+	job, err = prepareDerivedECDSASignJob(ctx, s.shareReader, job, in)
 	if err == nil {
 		err = s.runner.RunSign(ctx, job, in.Transport)
 	}
@@ -225,8 +227,4 @@ func (s *Service) RunSignSession(ctx context.Context, in SignInput) error {
 
 func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error) {
 	return s.runner.ExportECDSASignature(key)
-}
-
-func (s *Service) ECDSAAddress(key string) (string, error) {
-	return s.runner.ECDSAAddress(key)
 }

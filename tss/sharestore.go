@@ -1,24 +1,14 @@
 package tss
 
-import (
-	"context"
-
-	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
-)
+import coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 
 var (
-	ErrShareNotFound         = coreshares.ErrShareNotFound
-	ErrInvalidSharePayload   = coreshares.ErrInvalidSharePayload
-	ErrVaultUnavailable      = coreshares.ErrVaultUnavailable
-	ErrVaultPermissionDenied = coreshares.ErrVaultPermissionDenied
-	ErrVaultWriteFailed      = coreshares.ErrVaultWriteFailed
-	ErrVaultReadFailed       = coreshares.ErrVaultReadFailed
-	ErrMetadataMismatch      = coreshares.ErrMetadataMismatch
-	ErrUnsupportedVersion    = coreshares.ErrUnsupportedVersion
+	ErrShareNotFound       = coreshares.ErrShareNotFound
+	ErrInvalidSharePayload = coreshares.ErrInvalidSharePayload
+	ErrUnsupportedVersion  = coreshares.ErrUnsupportedVersion
 )
 
 type StoredShare = coreshares.StoredShare
-type ShareMeta = coreshares.ShareMeta
 type ShareReader = coreshares.ShareReader
 type ShareWriter = coreshares.ShareWriter
 type SaveShareInput = coreshares.SaveShareInput
@@ -36,9 +26,4 @@ func UnmarshalKeyMaterial(blob []byte) (ECDSAKeyMaterial, error) {
 
 func InspectEncodedECDSAKeyMaterial(blob []byte) (ECDSAKeyMaterialEvidence, error) {
 	return coreshares.InspectEncodedECDSAKeyMaterial(blob)
-}
-
-type ShareCipher interface {
-	Encrypt(ctx context.Context, plaintext []byte) ([]byte, error)
-	Decrypt(ctx context.Context, ciphertext []byte) ([]byte, error)
 }

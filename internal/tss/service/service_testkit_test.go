@@ -46,14 +46,6 @@ func (r *stubRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (e
 	return share, nil
 }
 
-func (r *stubRunner) ExportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey) (coreshares.ECDSAKeyMaterial, error) {
-	r.events = append(r.events, "export-material:"+key.KeyID+":"+key.LocalPartyID)
-	if material, ok := r.materialByKey[key.KeyID]; ok {
-		return material, nil
-	}
-	return coreshares.ECDSAKeyMaterial{}, errShareMissing
-}
-
 func (r *stubRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
 	r.events = append(r.events, "cleanup:"+key.SessionID)
 	r.deletedKeys = append(r.deletedKeys, key.SessionID)
@@ -80,21 +72,6 @@ func (r *stubRunner) RunSign(_ context.Context, job tssbnbrunner.SignJob, _ core
 func (r *stubRunner) ExportECDSASignature(string) (common.SignatureData, error) {
 	r.signatureExported = true
 	return common.SignatureData{}, nil
-}
-
-func (r *stubRunner) ImportECDSAKeyMaterial(key tssbnbrunner.ECDSAKeyMaterialKey, material coreshares.ECDSAKeyMaterial) {
-	if r.materialByKey == nil {
-		r.materialByKey = map[string]coreshares.ECDSAKeyMaterial{}
-	}
-	if r.shareByKey == nil {
-		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
-	}
-	r.materialByKey[key.KeyID] = material
-	r.shareByKey[key.KeyID] = material.Share
-}
-
-func (r *stubRunner) ECDSAAddress(string) (string, error) {
-	return "", nil
 }
 
 func newTestLogger() *slog.Logger {
@@ -178,6 +155,12 @@ type failingShareWriter struct {
 
 func (s *failingShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
 	return s.err
+}
+
+type discardingShareWriter struct{}
+
+func (discardingShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
+	return nil
 }
 
 type mutatingShareWriter struct {

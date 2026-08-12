@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssruntime "github.com/BroLabel/brosettlement-mpc-core/internal/tss/runtime"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
@@ -74,7 +73,7 @@ func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material norm
 
 func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, runner Runner, runKey tssbnbrunner.DKGRunKey, keyID string, opaqueDescriptorFingerprint []byte, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) error {
 	if shareWriter == nil {
-		return nil
+		return ErrShareWriterRequired
 	}
 	if err := tssruntime.PersistKeyMaterialAfterDKG(ctx, shareWriter, share, tssruntime.DKGPersistInput{
 		SessionID:                   runKey.SessionID,
@@ -89,18 +88,6 @@ func persistECDSAShareAfterDKG(ctx context.Context, shareWriter ShareWriter, run
 	}
 	runner.DeleteTemporaryECDSADKGShare(runKey)
 	return nil
-}
-
-func importNoStoreECDSAKeyMaterial(runner Runner, shareWriter ShareWriter, runKey tssbnbrunner.DKGRunKey, keyID string, share ecdsakeygen.LocalPartySaveData, material normalizedDKGMaterial) {
-	if shareWriter != nil || len(material.ChainCode) != 32 {
-		return
-	}
-	runner.ImportECDSAKeyMaterial(tssbnbrunner.ECDSAKeyMaterialKey{KeyID: keyID, LocalPartyID: runKey.LocalPartyID}, coreshares.ECDSAKeyMaterial{
-		Share:            share,
-		ChainCode:        append([]byte(nil), material.ChainCode...),
-		PublicKeyFormat:  corederivation.PublicKeyFormatUncompressedHex,
-		DerivationScheme: material.Scheme,
-	})
 }
 
 func resolveDKGOutputKeyID(in DKGInput, algorithm string) (string, error) {

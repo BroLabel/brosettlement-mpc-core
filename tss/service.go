@@ -80,7 +80,11 @@ type preParamsProvider = tssservice.LifecyclePool
 type Snapshot = tssservice.Snapshot
 type DKGOutput = tssservice.DKGOutput
 
-var ErrNilRunner = tssservice.ErrNilRunner
+var (
+	ErrNilRunner           = tssservice.ErrNilRunner
+	ErrShareReaderRequired = tssservice.ErrShareReaderRequired
+	ErrShareWriterRequired = tssservice.ErrShareWriterRequired
+)
 
 var (
 	ErrInvalidSessionDescriptor = errors.New("invalid session descriptor")
@@ -285,16 +289,11 @@ func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) er
 		DerivationContextHash: hash,
 		Transport:             req.Transport,
 		EmptyKeyErr:           ErrShareNotFound,
-		MetadataMismatch:      ErrMetadataMismatch,
 	})
 }
 
 func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error) {
 	return s.impl.ExportECDSASignature(key)
-}
-
-func (s *Service) ECDSAAddress(key string) (string, error) {
-	return s.impl.ECDSAAddress(key)
 }
 
 func (r DKGSessionRequest) Validate() error {
@@ -311,6 +310,18 @@ func (r DKGSessionRequest) Validate() error {
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrTransportRequired)
 	if err != nil {
 		return err
+	}
+	algorithm := strings.ToLower(strings.TrimSpace(r.Session.Algorithm))
+	if algorithm == "" {
+		algorithm = AlgorithmECDSA
+	}
+	curve := strings.ToLower(strings.TrimSpace(r.Session.Curve))
+	if curve == "" && algorithm == AlgorithmECDSA {
+		curve = CurveSecp256k1
+	}
+	if (algorithm != AlgorithmECDSA || curve != CurveSecp256k1) &&
+		(algorithm != AlgorithmEdDSA || curve != CurveEd25519) {
+		return ErrUnsupportedAlgorithmCurve
 	}
 	if corederivation.IsECDSAAlgorithm(r.Session.Algorithm) && strings.TrimSpace(r.Session.KeyID) == "" {
 		return ErrKeyIDRequired

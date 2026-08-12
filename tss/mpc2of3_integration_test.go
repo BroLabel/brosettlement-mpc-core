@@ -90,14 +90,6 @@ func (s *mpc2Of3ShareStore) SaveShare(_ context.Context, in SaveShareInput) erro
 	}
 	s.shares[key] = StoredShare{
 		Blob: append([]byte(nil), in.CodecBlob...),
-		Meta: ShareMeta{
-			Algorithm:        AlgorithmECDSA,
-			Curve:            CurveSecp256k1,
-			Version:          2,
-			ChainCodePresent: true,
-			PublicKeyFormat:  PublicKeyFormatUncompressedHex,
-			DerivationScheme: DerivationSchemeBIP32Secp256k1,
-		},
 	}
 	s.bindings = append(s.bindings, mpc2Of3SaveBinding{
 		sessionID:                   in.SessionID,

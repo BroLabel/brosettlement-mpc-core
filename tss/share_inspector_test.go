@@ -17,8 +17,10 @@ func TestInspectEncodedECDSAKeyMaterialExposesCoreEvidence(t *testing.T) {
 		t.Fatal("create secp256k1 test point")
 	}
 	blob, err := MarshalKeyMaterial(ECDSAKeyMaterial{
-		Share:     ecdsakeygen.LocalPartySaveData{ECDSAPub: point},
-		ChainCode: bytes.Repeat([]byte{0x42}, 32),
+		Share:            ecdsakeygen.LocalPartySaveData{ECDSAPub: point},
+		ChainCode:        bytes.Repeat([]byte{0x42}, 32),
+		PublicKeyFormat:  PublicKeyFormatUncompressedHex,
+		DerivationScheme: DerivationSchemeBIP32Secp256k1,
 	})
 	if err != nil {
 		t.Fatalf("MarshalKeyMaterial() error = %v", err)

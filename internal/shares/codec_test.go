@@ -69,15 +69,8 @@ func TestCodecV2RejectsMalformedInput(t *testing.T) {
 }
 
 func TestCodecV2AcceptsBlobAtLimit(t *testing.T) {
-	material, blob := codecV2BlobAtSize(t, maxKeyMaterialBlobBytes)
-
-	encoded, err := MarshalKeyMaterial(material)
-	if err != nil {
-		t.Fatalf("MarshalKeyMaterial() error = %v", err)
-	}
-	if !bytes.Equal(encoded, blob) {
-		t.Fatal("MarshalKeyMaterial() changed the codec-v2 bytes at the size limit")
-	}
+	material := codecV2GoldenMaterial()
+	blob := paddedCodecV2BlobAtSize(t, material, maxKeyMaterialBlobBytes)
 
 	decoded, err := UnmarshalKeyMaterial(blob)
 	if err != nil {
@@ -100,6 +93,43 @@ func TestCodecV2RejectsBlobOverLimit(t *testing.T) {
 	if !errors.Is(err, ErrInvalidSharePayload) {
 		t.Fatalf("UnmarshalKeyMaterial() error = %v, want ErrInvalidSharePayload for an oversized blob", err)
 	}
+}
+
+func paddedCodecV2BlobAtSize(t *testing.T, material ECDSAKeyMaterial, target int) []byte {
+	t.Helper()
+	type paddedEnvelope struct {
+		Version uint32
+		Share   ecdsakeygen.LocalPartySaveData
+		Meta    KeyMaterialMeta
+		Padding []byte
+	}
+	for low, high := 0, target; low <= high; {
+		paddingLength := low + (high-low)/2
+		var buf bytes.Buffer
+		err := gob.NewEncoder(&buf).Encode(paddedEnvelope{
+			Version: codecVersion,
+			Share:   material.Share,
+			Meta: KeyMaterialMeta{
+				ChainCode:        append([]byte(nil), material.ChainCode...),
+				PublicKeyFormat:  material.PublicKeyFormat,
+				DerivationScheme: material.DerivationScheme,
+			},
+			Padding: make([]byte, paddingLength),
+		})
+		if err != nil {
+			t.Fatalf("encode padded codec-v2 envelope: %v", err)
+		}
+		switch {
+		case buf.Len() == target:
+			return buf.Bytes()
+		case buf.Len() < target:
+			low = paddingLength + 1
+		default:
+			high = paddingLength - 1
+		}
+	}
+	t.Fatalf("no padded codec-v2 envelope encodes to %d bytes", target)
+	return nil
 }
 
 func TestCodecV2RejectsTrailingGarbage(t *testing.T) {
@@ -139,6 +169,30 @@ func TestCodecV2RejectsUnsupportedVersion(t *testing.T) {
 	_, err := UnmarshalKeyMaterial(buf.Bytes())
 	if !errors.Is(err, ErrUnsupportedVersion) {
 		t.Fatalf("UnmarshalKeyMaterial() error = %v, want ErrUnsupportedVersion", err)
+	}
+}
+
+func TestCodecV2RejectsUnsupportedMaterialFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ECDSAKeyMaterial)
+	}{
+		{name: "chain code length", mutate: func(material *ECDSAKeyMaterial) { material.ChainCode = []byte{0x11} }},
+		{name: "public key format", mutate: func(material *ECDSAKeyMaterial) { material.PublicKeyFormat = "compressed_hex" }},
+		{name: "derivation scheme", mutate: func(material *ECDSAKeyMaterial) { material.DerivationScheme = "slip10_ed25519" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			material := codecV2GoldenMaterial()
+			tt.mutate(&material)
+			blob := encodeCodecV2Envelope(t, material)
+
+			_, err := UnmarshalKeyMaterial(blob)
+			if !errors.Is(err, ErrInvalidSharePayload) {
+				t.Fatalf("UnmarshalKeyMaterial() error = %v, want ErrInvalidSharePayload", err)
+			}
+		})
 	}
 }
 

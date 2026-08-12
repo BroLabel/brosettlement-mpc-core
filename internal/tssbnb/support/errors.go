@@ -10,5 +10,6 @@ var (
 	ErrStalledProtocol          = errors.New("protocol stalled")
 	ErrKeyShareNotFound         = errors.New("ecdsa key share not found")
 	ErrSignDigestRequired       = errors.New("sign digest is required")
+	ErrSignDigestMismatch       = errors.New("sign result digest mismatch")
 	ErrSignAlgorithmUnsupported = errors.New("sign supports only ecdsa")
 )

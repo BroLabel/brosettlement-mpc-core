@@ -22,6 +22,7 @@ var (
 	ErrStalledProtocol          = bnbutils.ErrStalledProtocol
 	ErrKeyShareNotFound         = bnbutils.ErrKeyShareNotFound
 	ErrSignDigestRequired       = bnbutils.ErrSignDigestRequired
+	ErrSignDigestMismatch       = bnbutils.ErrSignDigestMismatch
 	ErrSignAlgorithmUnsupported = bnbutils.ErrSignAlgorithmUnsupported
 )
 
@@ -139,6 +140,9 @@ func (r *BnbRunner) RunSign(ctx context.Context, job SignJob, transport Transpor
 	if err != nil {
 		if errors.Is(err, flow.ErrSignDigestRequired) {
 			return ErrSignDigestRequired
+		}
+		if errors.Is(err, flow.ErrSignDigestMismatch) {
+			return ErrSignDigestMismatch
 		}
 		if errors.Is(err, flow.ErrSignAlgorithmUnsupported) {
 			return ErrSignAlgorithmUnsupported

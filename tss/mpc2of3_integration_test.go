@@ -487,6 +487,8 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 	}
 	derivationContext.DerivedPublicKey = derivedPublicKey
 	digest := randomMPC2Of3Bytes(t, 32)
+	digest[0] = 0
+	digest[1] |= 1
 	sessionID := "mpc2of3-sign-" + hex.EncodeToString(randomMPC2Of3Bytes(t, 8))
 	_, transports := newMPC2Of3FrameBus(parties)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)

@@ -70,8 +70,8 @@ run_required_test \
 
 echo "==> threshold adapter"
 run_required_test \
-	./internal/tssbnb/runner \
-	'^TestThresholdAdapterPreservesPublicRequiredSignersAndRecordsLibraryThreshold$' \
+	./internal/tssbnb/utils \
+	'^TestBuildParamsConvertsRequiredSignerThresholdForTSSLib$' \
 	threshold-adapter \
 	2m
 

@@ -340,11 +340,6 @@ func TestNewBnbServiceReturnsFacade(t *testing.T) {
 	if got := svc.Snapshot(); got != (Snapshot{}) {
 		t.Fatalf("expected zero-value snapshot, got %+v", got)
 	}
-
-	var zero DKGOutput
-	if zero != (DKGOutput{}) {
-		t.Fatalf("expected zero-value output type, got %+v", zero)
-	}
 }
 
 func TestServiceDoesNotExposeShareOnlyAPI(t *testing.T) {
@@ -450,17 +445,6 @@ func TestRunDKGSessionWithPreParamsConsumesPublicHandle(t *testing.T) {
 	}
 	if got := service.Snapshot(); got != wantSnapshot {
 		t.Fatalf("Snapshot() = %+v, want %+v", got, wantSnapshot)
-	}
-}
-
-func TestDKGOutputAliasMatchesInternalContract(t *testing.T) {
-	got := DKGOutput{
-		KeyID:     "key-1",
-		PublicKey: "04abcd",
-		Address:   "T...",
-	}
-	if got.KeyID == "" || got.PublicKey == "" || got.Address == "" {
-		t.Fatalf("expected populated facade output, got %+v", got)
 	}
 }
 

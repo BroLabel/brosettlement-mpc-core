@@ -142,6 +142,39 @@ func TestNewOutboundBaseFrameStampsDerivationContextHash(t *testing.T) {
 	}
 }
 
+func TestInferRoundHint(t *testing.T) {
+	tests := []struct {
+		messageType string
+		want        uint32
+	}{
+		{messageType: "binance.tsslib.ecdsa.keygen.KGRound1Message", want: 1},
+		{messageType: "binance.tsslib.ecdsa.keygen.KGRound2Message1", want: 2},
+		{messageType: "binance.tsslib.ecdsa.keygen.KGRound2Message2", want: 2},
+		{messageType: "binance.tsslib.ecdsa.keygen.KGRound3Message", want: 3},
+		{messageType: "binance.tsslib.eddsa.signing.SignRound1Message", want: 1},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound1Message1", want: 1},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound1Message2", want: 1},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound2Message", want: 2},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound3Message", want: 3},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound4Message", want: 4},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound5Message", want: 5},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound6Message", want: 6},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound7Message", want: 7},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound8Message", want: 8},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound9Message", want: 9},
+		{messageType: "binance.tsslib.ecdsa.signing.SignRound10Message", want: 0},
+		{messageType: "unknown", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.messageType, func(t *testing.T) {
+			if got := inferRoundHint(tt.messageType); got != tt.want {
+				t.Fatalf("inferRoundHint(%q) = %d, want %d", tt.messageType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRecvLoopQueueFull(t *testing.T) {
 	inbound := make(chan protocol.Frame, 1)
 	inbound <- protocol.Frame{}

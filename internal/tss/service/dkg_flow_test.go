@@ -1,16 +1,25 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/elliptic"
 	"encoding/hex"
 	"errors"
+	"io"
+	"math/big"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
-	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
+	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
+	"github.com/BroLabel/brosettlement-mpc-core/protocol"
+	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
+	"github.com/bnb-chain/tss-lib/common"
+	"github.com/bnb-chain/tss-lib/crypto"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
@@ -38,6 +47,430 @@ func newECDSASecp256k1StubRunner(t *testing.T, sessionID string) *stubRunner {
 	}
 }
 
+type concurrentDKGRunner struct {
+	mu         sync.Mutex
+	shares     map[tssbnbrunner.DKGRunKey]ecdsakeygen.LocalPartySaveData
+	transports map[tssbnbrunner.DKGRunKey]coretransport.FrameTransport
+	started    int
+	release    chan struct{}
+}
+
+func newConcurrentDKGRunner(t *testing.T) *concurrentDKGRunner {
+	t.Helper()
+	pub := crypto.ScalarBaseMult(tsslib.S256(), big.NewInt(7))
+	if pub == nil {
+		t.Fatal("expected test public key point")
+	}
+	return &concurrentDKGRunner{
+		shares: map[tssbnbrunner.DKGRunKey]ecdsakeygen.LocalPartySaveData{
+			{SessionID: "shared-session", LocalPartyID: "B"}: {
+				LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(11)},
+				ECDSAPub:     pub,
+			},
+			{SessionID: "shared-session", LocalPartyID: "C"}: {
+				LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(22)},
+				ECDSAPub:     pub,
+			},
+		},
+		transports: make(map[tssbnbrunner.DKGRunKey]coretransport.FrameTransport),
+		release:    make(chan struct{}),
+	}
+}
+
+func (r *concurrentDKGRunner) RunDKG(ctx context.Context, job tssbnbrunner.DKGJob, transport coretransport.FrameTransport) error {
+	key := tssbnbrunner.DKGRunKey{SessionID: job.SessionID, LocalPartyID: job.LocalPartyID}
+	r.mu.Lock()
+	r.transports[key] = transport
+	r.started++
+	if r.started == 2 {
+		close(r.release)
+	}
+	release := r.release
+	r.mu.Unlock()
+	select {
+	case <-release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (*concurrentDKGRunner) RunSign(context.Context, tssbnbrunner.SignJob, coretransport.FrameTransport) error {
+	return nil
+}
+
+func (*concurrentDKGRunner) ExportECDSASignature(string) (common.SignatureData, error) {
+	return common.SignatureData{}, nil
+}
+
+func (r *concurrentDKGRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	share, ok := r.shares[key]
+	if !ok {
+		return ecdsakeygen.LocalPartySaveData{}, errShareMissing
+	}
+	return share, nil
+}
+
+func (r *concurrentDKGRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
+	r.mu.Lock()
+	delete(r.shares, key)
+	r.mu.Unlock()
+}
+
+type identifiedTransport struct {
+	partyID string
+}
+
+func (*identifiedTransport) SendFrame(context.Context, protocol.Frame) error {
+	return nil
+}
+
+func (*identifiedTransport) RecvFrame(context.Context) (protocol.Frame, error) {
+	return protocol.Frame{}, io.EOF
+}
+
+type concurrentShareWriter struct {
+	mu     sync.Mutex
+	inputs map[string]coreshares.SaveShareInput
+}
+
+type sequentialPreParamsSource struct {
+	mu       sync.Mutex
+	values   []*ecdsakeygen.LocalPreParams
+	acquires int
+}
+
+func (s *sequentialPreParamsSource) Acquire(context.Context) (*ecdsakeygen.LocalPreParams, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.acquires >= len(s.values) {
+		return nil, errors.New("preparams source exhausted")
+	}
+	value := s.values[s.acquires]
+	s.acquires++
+	return value, nil
+}
+
+type consumeObservingRunner struct {
+	*stubRunner
+	handle     *preparams.Handle
+	discardErr error
+	runErr     error
+}
+
+func (r *consumeObservingRunner) RunDKG(context.Context, tssbnbrunner.DKGJob, coretransport.FrameTransport) error {
+	r.discardErr = r.handle.Discard()
+	return r.runErr
+}
+
+func (w *concurrentShareWriter) SaveShare(_ context.Context, input coreshares.SaveShareInput) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.inputs[input.LocalPartyID] = coreshares.SaveShareInput{
+		SessionID:                   input.SessionID,
+		KeyID:                       input.KeyID,
+		LocalPartyID:                input.LocalPartyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), input.OpaqueDescriptorFingerprint...),
+		CodecBlob:                   append([]byte(nil), input.CodecBlob...),
+	}
+	return nil
+}
+
+type blockingFirstShareWriter struct {
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+}
+
+func (w *blockingFirstShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
+	w.mu.Lock()
+	w.calls++
+	call := w.calls
+	w.mu.Unlock()
+	if call != 1 {
+		return nil
+	}
+	close(w.entered)
+	<-w.release
+	return nil
+}
+
+func TestDuplicateDKGServiceRejectsSamePartyUntilPersistenceCompletes(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	close(runner.release)
+	runner.started = 2
+	writer := &blockingFirstShareWriter{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := New(runner, newTestLogger(), nil, nil, writer)
+	input := DKGInput{
+		SessionID:    "shared-session",
+		LocalPartyID: "B",
+		KeyID:        "shared-key",
+		Parties:      []string{"B", "C", "remote"},
+		Threshold:    2,
+		Curve:        "secp256k1",
+		Algorithm:    "ecdsa",
+		DerivationMaterial: DKGDerivationMaterial{
+			ChainCode:        strings.Repeat("11", 32),
+			DerivationScheme: "bip32_secp256k1",
+		},
+		MissingPub:  errMissingPublicKey,
+		MissingAddr: errMissingAddress,
+	}
+
+	firstResult := make(chan error, 1)
+	go func() {
+		_, err := svc.RunDKGSession(context.Background(), input)
+		firstResult <- err
+	}()
+	<-writer.entered
+
+	if _, err := svc.RunDKGSession(context.Background(), input); !errors.Is(err, ErrDuplicateDKGRun) {
+		t.Fatalf("duplicate error = %v, want ErrDuplicateDKGRun", err)
+	}
+
+	close(writer.release)
+	if err := <-firstResult; err != nil {
+		t.Fatalf("first run failed: %v", err)
+	}
+}
+
+func TestConcurrentDKGServiceIsolatesPartyTransportAndCodecResults(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	writer := &concurrentShareWriter{inputs: make(map[string]coreshares.SaveShareInput)}
+	svc := New(runner, newTestLogger(), nil, nil, writer)
+	chainCode := strings.Repeat("11", 32)
+	bTransport := &identifiedTransport{partyID: "B"}
+	cTransport := &identifiedTransport{partyID: "C"}
+
+	type result struct {
+		output DKGOutput
+		err    error
+	}
+	run := func(partyID string, transport coretransport.FrameTransport) <-chan result {
+		resultCh := make(chan result, 1)
+		go func() {
+			output, err := svc.RunDKGSession(context.Background(), DKGInput{
+				SessionID:    "shared-session",
+				LocalPartyID: partyID,
+				KeyID:        "shared-key",
+				Parties:      []string{"B", "C", "remote"},
+				Threshold:    2,
+				Curve:        "secp256k1",
+				Algorithm:    "ecdsa",
+				DerivationMaterial: DKGDerivationMaterial{
+					ChainCode:        chainCode,
+					DerivationScheme: "bip32_secp256k1",
+				},
+				Transport:   transport,
+				MissingPub:  errMissingPublicKey,
+				MissingAddr: errMissingAddress,
+			})
+			resultCh <- result{output: output, err: err}
+		}()
+		return resultCh
+	}
+
+	bResultCh := run("B", bTransport)
+	cResultCh := run("C", cTransport)
+	bResult := <-bResultCh
+	cResult := <-cResultCh
+	if bResult.err != nil || cResult.err != nil {
+		t.Fatalf("concurrent runs failed: B=%v C=%v", bResult.err, cResult.err)
+	}
+	if bResult.output.PublicKey != cResult.output.PublicKey {
+		t.Fatal("B and C public keys differ")
+	}
+	if bResult.output.ChainCode != chainCode || cResult.output.ChainCode != chainCode {
+		t.Fatal("B and C chain codes differ")
+	}
+
+	bKey := tssbnbrunner.DKGRunKey{SessionID: "shared-session", LocalPartyID: "B"}
+	cKey := tssbnbrunner.DKGRunKey{SessionID: "shared-session", LocalPartyID: "C"}
+	runner.mu.Lock()
+	bSeenTransport := runner.transports[bKey]
+	cSeenTransport := runner.transports[cKey]
+	runner.mu.Unlock()
+	if bSeenTransport != bTransport || cSeenTransport != cTransport {
+		t.Fatal("party-specific transports crossed between DKG runs")
+	}
+
+	writer.mu.Lock()
+	bBlob := append([]byte(nil), writer.inputs["B"].CodecBlob...)
+	cBlob := append([]byte(nil), writer.inputs["C"].CodecBlob...)
+	writer.mu.Unlock()
+	if len(bBlob) == 0 || len(cBlob) == 0 {
+		t.Fatal("missing persisted codec blobs")
+	}
+	if bytes.Equal(bBlob, cBlob) {
+		t.Fatal("B and C codec blobs unexpectedly match")
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsInvalidHandleBeforeRunner(t *testing.T) {
+	runner := newECDSASecp256k1StubRunner(t, "session-1")
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil, nil)
+
+	for name, handle := range map[string]*preparams.Handle{
+		"nil":    nil,
+		"forged": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle)
+			if !errors.Is(err, preparams.ErrInvalidPreParamsHandle) {
+				t.Fatalf("error = %v, want ErrInvalidPreParamsHandle", err)
+			}
+			if runner.lastDKGJob.SessionID != "" {
+				t.Fatal("runner started for an invalid handle")
+			}
+		})
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsForeignServiceBeforeRunner(t *testing.T) {
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
+	ownerRunner := newECDSASecp256k1StubRunner(t, "session-1")
+	foreignRunner := newECDSASecp256k1StubRunner(t, "session-1")
+	owner := New(ownerRunner, newTestLogger(), nil, nil, nil, source)
+	foreign := New(foreignRunner, newTestLogger(), nil, nil, nil, source)
+
+	handle, err := owner.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("acquire handle failed: %v", err)
+	}
+	if _, err := foreign.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle); !errors.Is(err, preparams.ErrForeignPreParamsHandle) {
+		t.Fatalf("foreign run error = %v, want ErrForeignPreParamsHandle", err)
+	}
+	if foreignRunner.lastDKGJob.SessionID != "" {
+		t.Fatal("foreign service started runner")
+	}
+	if err := handle.Discard(); err != nil {
+		t.Fatalf("owner handle was changed by foreign attempt: %v", err)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsConsumesBeforeRunnerAndBurnsOnError(t *testing.T) {
+	runErr := errors.New("runner stopped")
+	runner := &consumeObservingRunner{
+		stubRunner: newECDSASecp256k1StubRunner(t, "session-1"),
+		runErr:     runErr,
+	}
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
+	svc := New(runner, newTestLogger(), nil, nil, discardingShareWriter{}, source)
+	handle, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("acquire handle failed: %v", err)
+	}
+	runner.handle = handle
+
+	_, err = svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{
+		SessionID:          "session-1",
+		KeyID:              "session-1",
+		LocalPartyID:       "B",
+		Parties:            []string{"A", "B", "C"},
+		Threshold:          2,
+		Algorithm:          "ecdsa",
+		DerivationMaterial: validDKGMaterial(),
+		MissingPub:         errMissingPublicKey,
+		MissingAddr:        errMissingAddress,
+	}, handle)
+	if !errors.Is(err, runErr) {
+		t.Fatalf("run error = %v, want runner error", err)
+	}
+	if !errors.Is(runner.discardErr, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("discard at runner entry = %v, want ErrPreParamsConsumed", runner.discardErr)
+	}
+	if _, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle); !errors.Is(err, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("reuse after runner failure error = %v, want ErrPreParamsConsumed", err)
+	}
+}
+
+func TestRunDKGSessionWithPreParamsRejectsDiscardedHandleBeforeRunner(t *testing.T) {
+	runner := newECDSASecp256k1StubRunner(t, "session-1")
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
+	svc := New(runner, newTestLogger(), nil, nil, nil, source)
+	handle, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("acquire handle failed: %v", err)
+	}
+	if err := handle.Discard(); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+
+	if _, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{}, handle); !errors.Is(err, preparams.ErrPreParamsDiscarded) {
+		t.Fatalf("run error = %v, want ErrPreParamsDiscarded", err)
+	}
+	if runner.lastDKGJob.SessionID != "" {
+		t.Fatal("runner started for discarded handle")
+	}
+}
+
+func TestRunDKGSessionWithPreParamsConsumesIndependentHandlesForBAndC(t *testing.T) {
+	runner := newConcurrentDKGRunner(t)
+	writer := &concurrentShareWriter{inputs: make(map[string]coreshares.SaveShareInput)}
+	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}, {}}}
+	svc := New(runner, newTestLogger(), nil, nil, writer, source)
+
+	first, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("first acquire failed: %v", err)
+	}
+	second, err := svc.AcquireDKGPreParams(context.Background())
+	if err != nil {
+		t.Fatalf("second acquire failed: %v", err)
+	}
+
+	type result struct {
+		output DKGOutput
+		err    error
+	}
+	run := func(partyID string, handle *preparams.Handle) <-chan result {
+		resultCh := make(chan result, 1)
+		go func() {
+			output, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{
+				SessionID:    "shared-session",
+				LocalPartyID: partyID,
+				KeyID:        "shared-key",
+				Parties:      []string{"A", "B", "C"},
+				Threshold:    2,
+				Curve:        "secp256k1",
+				Algorithm:    "ecdsa",
+				DerivationMaterial: DKGDerivationMaterial{
+					ChainCode:        strings.Repeat("11", 32),
+					DerivationScheme: "bip32_secp256k1",
+				},
+				Transport:   &identifiedTransport{partyID: partyID},
+				MissingPub:  errMissingPublicKey,
+				MissingAddr: errMissingAddress,
+			}, handle)
+			resultCh <- result{output: output, err: err}
+		}()
+		return resultCh
+	}
+
+	bResultCh := run("B", second)
+	cResultCh := run("C", first)
+	bResult := <-bResultCh
+	cResult := <-cResultCh
+	if bResult.err != nil || cResult.err != nil {
+		t.Fatalf("concurrent handle runs failed: B=%v C=%v", bResult.err, cResult.err)
+	}
+	if bResult.output.PublicKey != cResult.output.PublicKey {
+		t.Fatal("B and C public keys differ")
+	}
+	if err := first.Discard(); !errors.Is(err, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("first handle terminal state = %v, want ErrPreParamsConsumed", err)
+	}
+	if err := second.Discard(); !errors.Is(err, preparams.ErrPreParamsConsumed) {
+		t.Fatalf("second handle terminal state = %v, want ErrPreParamsConsumed", err)
+	}
+}
+
 func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	t.Parallel()
 
@@ -45,7 +478,7 @@ func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
 	externalSource := &stubPreParamsSource{preParams: &ecdsakeygen.LocalPreParams{}}
 	logger := newTestLogger()
-	svc := New(runner, logger, internalPool, nil, externalSource)
+	svc := New(runner, logger, internalPool, nil, discardingShareWriter{}, externalSource)
 
 	output, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -82,7 +515,7 @@ func TestRunDKGSession_UsesInternalPoolWhenExternalPreParamsSourceMissing(t *tes
 	runner := newECDSASecp256k1StubRunner(t, "session-2")
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
 	logger := newTestLogger()
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, discardingShareWriter{})
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-2",
@@ -114,7 +547,7 @@ func TestRunDKGSession_ReturnsMissingPublicKeyError(t *testing.T) {
 	runner := newECDSAStubRunnerWithoutPub(t, "session-1")
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, discardingShareWriter{})
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -144,7 +577,7 @@ func TestRunDKGSession_ReturnsMissingPublicKeyForNonSecp256k1Share(t *testing.T)
 	}
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, discardingShareWriter{})
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -166,56 +599,26 @@ func TestRunDKGSession_ReturnsMissingPublicKeyForNonSecp256k1Share(t *testing.T)
 	}
 }
 
-func TestRunDKGSession_UsesExplicitECDSAKeyIDBeforeCleanup(t *testing.T) {
-	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	logger := newTestLogger()
-	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
-
-	out, err := svc.RunDKGSession(context.Background(), DKGInput{
-		SessionID:          "session-1",
-		KeyID:              "key-1",
-		LocalPartyID:       "p1",
-		OrgID:              "org",
-		Parties:            []string{"p1", "p2"},
-		Threshold:          1,
-		Algorithm:          "ecdsa",
-		DerivationMaterial: validDKGMaterial(),
-		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
-	})
-	if err != nil {
-		t.Fatalf("RunDKGSession returned error: %v", err)
-	}
-	if out.KeyID != "key-1" {
-		t.Fatalf("expected explicit key id, got %q", out.KeyID)
-	}
-	if out.PublicKey == "" || out.Address == "" {
-		t.Fatalf("expected populated output, got %+v", out)
-	}
-	if len(runner.deletedKeys) != 0 {
-		t.Fatalf("expected no cleanup without store, got %+v", runner.deletedKeys)
-	}
-}
-
 func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	store := &recordingShareStore{runner: runner, sessionID: "session-1"}
+	writer := &recordingShareWriter{runner: runner, sessionID: "session-1"}
+	fingerprint := []byte("opaque-fingerprint")
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, store)
+	svc := New(runner, logger, internalPool, nil, writer)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
-		SessionID:          "session-1",
-		KeyID:              "key-1",
-		LocalPartyID:       "p1",
-		OrgID:              "org",
-		Parties:            []string{"p1", "p2"},
-		Threshold:          1,
-		Algorithm:          "ecdsa",
-		DerivationMaterial: validDKGMaterial(),
-		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
+		SessionID:                   "session-1",
+		KeyID:                       "key-1",
+		LocalPartyID:                "p1",
+		OrgID:                       "org",
+		Parties:                     []string{"p1", "p2"},
+		OpaqueDescriptorFingerprint: fingerprint,
+		Threshold:                   1,
+		Algorithm:                   "ecdsa",
+		DerivationMaterial:          validDKGMaterial(),
+		MissingPub:                  errMissingPublicKey,
+		MissingAddr:                 errMissingAddress,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
@@ -223,14 +626,20 @@ func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	if out.KeyID != "key-1" {
 		t.Fatalf("expected explicit key id, got %q", out.KeyID)
 	}
-	if len(store.savedBlob) == 0 {
+	if len(writer.savedInput.CodecBlob) == 0 {
 		t.Fatal("expected share to be persisted")
 	}
-	if store.savedKeyID != "key-1" {
-		t.Fatalf("expected persisted key id key-1, got %q", store.savedKeyID)
+	if writer.savedInput.KeyID != "key-1" {
+		t.Fatalf("expected persisted key id key-1, got %q", writer.savedInput.KeyID)
 	}
-	if store.savedMeta.KeyID != "key-1" {
-		t.Fatalf("expected persisted metadata key id key-1, got %q", store.savedMeta.KeyID)
+	if writer.savedInput.SessionID != "session-1" {
+		t.Fatalf("expected persisted session id session-1, got %q", writer.savedInput.SessionID)
+	}
+	if writer.savedInput.LocalPartyID != "p1" {
+		t.Fatalf("expected persisted local party id p1, got %q", writer.savedInput.LocalPartyID)
+	}
+	if !bytes.Equal(writer.savedInput.OpaqueDescriptorFingerprint, fingerprint) {
+		t.Fatal("opaque descriptor fingerprint did not reach writer")
 	}
 	wantEvents := []string{"export:session-1", "persist:key-1", "cleanup:session-1"}
 	if !reflect.DeepEqual(runner.events, wantEvents) {
@@ -241,12 +650,41 @@ func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 	}
 }
 
+func TestRunDKGSessionCopiesOpaqueDescriptorFingerprintBeforeWriterCall(t *testing.T) {
+	runner := newECDSASecp256k1StubRunner(t, "session-1")
+	writer := &mutatingShareWriter{}
+	fingerprint := []byte{0x11, 0x22}
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil, writer)
+
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
+		SessionID:                   "session-1",
+		KeyID:                       "key-1",
+		LocalPartyID:                "p1",
+		OpaqueDescriptorFingerprint: fingerprint,
+		Parties:                     []string{"p1", "p2"},
+		Threshold:                   1,
+		Algorithm:                   "ecdsa",
+		DerivationMaterial:          validDKGMaterial(),
+		MissingPub:                  errMissingPublicKey,
+		MissingAddr:                 errMissingAddress,
+	})
+	if err != nil {
+		t.Fatalf("RunDKGSession returned error: %v", err)
+	}
+	if !bytes.Equal(fingerprint, []byte{0x11, 0x22}) {
+		t.Fatal("writer mutated caller-owned descriptor fingerprint")
+	}
+	if !bytes.Equal(writer.received.OpaqueDescriptorFingerprint, []byte{0x11, 0x22}) {
+		t.Fatal("writer did not receive original descriptor fingerprint")
+	}
+}
+
 func TestRunDKGSession_PersistFailureKeepsRunnerShare(t *testing.T) {
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	store := &failingShareStore{err: errPersistFailed}
+	writer := &failingShareWriter{err: errPersistFailed}
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, store)
+	svc := New(runner, logger, internalPool, nil, writer)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "session-1",
@@ -274,14 +712,13 @@ func TestRunDKGSession_PersistFailureKeepsRunnerShare(t *testing.T) {
 	}
 }
 
-func TestRunDKGThenSign_NoStoreKeepsRunnerShare(t *testing.T) {
+func TestRunDKGSession_RequiresShareWriterBeforeRunnerStart(t *testing.T) {
 	runner := newECDSASecp256k1StubRunner(t, "key-1")
-	runner.requireShareForSign = true
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
-	if _, err := svc.RunDKGSession(context.Background(), DKGInput{
+	_, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:          "key-1",
 		KeyID:              "key-1",
 		LocalPartyID:       "p1",
@@ -292,36 +729,12 @@ func TestRunDKGThenSign_NoStoreKeepsRunnerShare(t *testing.T) {
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
 		MissingAddr:        errMissingAddress,
-	}); err != nil {
-		t.Fatalf("RunDKGSession returned error: %v", err)
+	})
+	if !errors.Is(err, ErrShareWriterRequired) {
+		t.Fatalf("RunDKGSession() error = %v, want ErrShareWriterRequired", err)
 	}
-	material, ok := runner.materialByKey["key-1"]
-	if !ok {
-		t.Fatal("expected no-store DKG to keep full key material in runner")
-	}
-	if len(material.ChainCode) != 32 {
-		t.Fatalf("expected stored chain code, got %d bytes", len(material.ChainCode))
-	}
-	hash, err := corederivation.HashV1(validServiceDerivationContext())
-	if err != nil {
-		t.Fatalf("HashV1 returned error: %v", err)
-	}
-	if err := svc.RunSignSession(context.Background(), SignInput{
-		SessionID:             "sign-1",
-		KeyID:                 "key-1",
-		LocalPartyID:          "p1",
-		OrgID:                 "org",
-		Parties:               []string{"p1", "p2"},
-		Digest:                []byte{1, 2, 3},
-		Algorithm:             "ecdsa",
-		Curve:                 "secp256k1",
-		DerivationContext:     validServiceDerivationContext(),
-		DerivationContextHash: hash,
-	}); err != nil {
-		t.Fatalf("expected in-memory sign to keep working, got %v", err)
-	}
-	if len(runner.deletedKeys) != 0 {
-		t.Fatalf("expected no cleanup without store, got %+v", runner.deletedKeys)
+	if runner.lastDKGJob.SessionID != "" {
+		t.Fatalf("runner started unexpectedly: %+v", runner.lastDKGJob)
 	}
 }
 
@@ -329,7 +742,7 @@ func TestRunDKGSession_EdDSAReturnsKeyIDOnly(t *testing.T) {
 	runner := &stubRunner{}
 	logger := newTestLogger()
 	internalPool := &stubLifecyclePool{}
-	svc := New(runner, logger, internalPool, nil)
+	svc := New(runner, logger, internalPool, nil, nil)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-eddsa",
@@ -354,8 +767,8 @@ func TestRunDKGSession_EdDSAReturnsKeyIDOnly(t *testing.T) {
 func TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial(t *testing.T) {
 	chainCode := strings.Repeat("11", 32)
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
-	store := &recordingShareStore{runner: runner, sessionID: "session-1"}
-	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, store)
+	writer := &recordingShareWriter{runner: runner, sessionID: "session-1"}
+	svc := New(runner, newTestLogger(), &stubLifecyclePool{preParams: &ecdsakeygen.LocalPreParams{}}, nil, writer)
 
 	out, err := svc.RunDKGSession(context.Background(), DKGInput{
 		SessionID:    "session-1",
@@ -388,27 +801,15 @@ func TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial(t *testing.
 	if out.DerivationScheme != "bip32_secp256k1" {
 		t.Fatalf("DerivationScheme = %q", out.DerivationScheme)
 	}
-	material, err := coreshares.UnmarshalKeyMaterial(store.savedBlob)
+	material, err := coreshares.UnmarshalKeyMaterial(writer.savedInput.CodecBlob)
 	if err != nil {
 		t.Fatalf("UnmarshalKeyMaterial returned error: %v", err)
 	}
 	if hex.EncodeToString(material.ChainCode) != chainCode {
 		t.Fatalf("persisted chain code mismatch: %x", material.ChainCode)
 	}
-	if store.savedKeyID != "key-1" {
-		t.Fatalf("persisted key id = %q", store.savedKeyID)
-	}
-	if store.savedMeta.Version != 2 {
-		t.Fatalf("persisted metadata version = %d", store.savedMeta.Version)
-	}
-	if !store.savedMeta.ChainCodePresent {
-		t.Fatal("expected persisted metadata to record chain code presence")
-	}
-	if store.savedMeta.PublicKeyFormat != "uncompressed_hex" {
-		t.Fatalf("persisted metadata public key format = %q", store.savedMeta.PublicKeyFormat)
-	}
-	if store.savedMeta.DerivationScheme != "bip32_secp256k1" {
-		t.Fatalf("persisted metadata derivation scheme = %q", store.savedMeta.DerivationScheme)
+	if writer.savedInput.KeyID != "key-1" {
+		t.Fatalf("persisted key id = %q", writer.savedInput.KeyID)
 	}
 }
 

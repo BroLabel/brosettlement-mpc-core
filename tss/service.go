@@ -29,7 +29,8 @@ type ServiceOption func(*serviceOptions)
 type serviceOptions struct {
 	preParamsConfig    PreParamsConfig
 	hasPreParamsConfig bool
-	shareStore         ShareStore
+	shareReader        ShareReader
+	shareWriter        ShareWriter
 	metrics            bnbutils.Metrics
 	preParamsSource    PreParamsSource
 }
@@ -58,10 +59,11 @@ type SignSessionDescriptor struct {
 }
 
 type DKGSessionRequest struct {
-	Session            DKGSessionDescriptor
-	LocalPartyID       string
-	DerivationMaterial *DKGDerivationMaterial
-	Transport          Transport
+	Session                     DKGSessionDescriptor
+	LocalPartyID                string
+	OpaqueDescriptorFingerprint []byte
+	DerivationMaterial          *DKGDerivationMaterial
+	Transport                   Transport
 }
 
 type SignSessionRequest struct {
@@ -78,7 +80,11 @@ type preParamsProvider = tssservice.LifecyclePool
 type Snapshot = tssservice.Snapshot
 type DKGOutput = tssservice.DKGOutput
 
-var ErrNilRunner = tssservice.ErrNilRunner
+var (
+	ErrNilRunner           = tssservice.ErrNilRunner
+	ErrShareReaderRequired = tssservice.ErrShareReaderRequired
+	ErrShareWriterRequired = tssservice.ErrShareWriterRequired
+)
 
 var (
 	ErrInvalidSessionDescriptor = errors.New("invalid session descriptor")
@@ -97,9 +103,15 @@ func WithPreParamsConfig(cfg PreParamsConfig) ServiceOption {
 	}
 }
 
-func WithShareStore(store ShareStore) ServiceOption {
+func WithShareReader(reader ShareReader) ServiceOption {
 	return func(opts *serviceOptions) {
-		opts.shareStore = store
+		opts.shareReader = reader
+	}
+}
+
+func WithShareWriter(writer ShareWriter) ServiceOption {
+	return func(opts *serviceOptions) {
+		opts.shareWriter = writer
 	}
 }
 
@@ -127,7 +139,8 @@ func NewBnbService(logger *slog.Logger, opts ...ServiceOption) *Service {
 		tssbnbrunner.NewBnbRunner(logger, runnerOpts...),
 		logger,
 		pool,
-		options.shareStore,
+		options.shareReader,
+		options.shareWriter,
 		options.preParamsSource,
 	)
 }
@@ -149,21 +162,23 @@ func newPreParamsPool(logger *slog.Logger, opts serviceOptions) preParamsProvide
 		cfg = opts.preParamsConfig
 	}
 	return preparams.NewPool(logger, preparams.Config{
-		Enabled:             cfg.Enabled,
-		TargetSize:          cfg.TargetSize,
-		MaxConcurrency:      cfg.MaxConcurrency,
-		GenerateTimeout:     cfg.GenerateTimeout,
-		AcquireTimeout:      cfg.AcquireTimeout,
-		RetryBackoff:        cfg.RetryBackoff,
-		SyncFallbackOnEmpty: cfg.SyncFallbackOnEmpty,
-		FileCacheEnabled:    cfg.FileCacheEnabled,
-		FileCacheDir:        cfg.FileCacheDir,
+		Enabled:               cfg.Enabled,
+		TargetSize:            cfg.TargetSize,
+		MaxConcurrency:        cfg.MaxConcurrency,
+		GenerationParallelism: cfg.GenerationParallelism,
+		GenerateTimeout:       cfg.GenerateTimeout,
+		AcquireTimeout:        cfg.AcquireTimeout,
+		RetryBackoff:          cfg.RetryBackoff,
+		SyncFallbackOnEmpty:   cfg.SyncFallbackOnEmpty,
+		AutoRefillOnAcquire:   cfg.AutoRefillOnAcquire,
+		FileCacheEnabled:      cfg.FileCacheEnabled,
+		FileCacheDir:          cfg.FileCacheDir,
 	})
 }
 
-func newService(r runner, logger *slog.Logger, pool preParamsProvider, shareStore ShareStore, source PreParamsSource) *Service {
+func newService(r runner, logger *slog.Logger, pool preParamsProvider, shareReader ShareReader, shareWriter ShareWriter, source PreParamsSource) *Service {
 	return &Service{
-		impl: tssservice.New(r, logger, pool, shareStore, source),
+		impl: tssservice.New(r, logger, pool, shareReader, shareWriter, source),
 	}
 }
 
@@ -175,6 +190,23 @@ func (s *Service) StopPreParamsPool() error {
 	return s.impl.StopPreParamsPool()
 }
 
+// PausePreParamsRefill prevents new background pre-parameter generation jobs
+// from starting. Generation already in flight is allowed to finish.
+func (s *Service) PausePreParamsRefill() {
+	if s == nil || s.impl == nil {
+		return
+	}
+	s.impl.PausePreParamsRefill()
+}
+
+// ResumePreParamsRefill re-enables asynchronous pre-parameter generation.
+func (s *Service) ResumePreParamsRefill() {
+	if s == nil || s.impl == nil {
+		return
+	}
+	s.impl.ResumePreParamsRefill()
+}
+
 func (s *Service) Snapshot() Snapshot {
 	return s.impl.Snapshot()
 }
@@ -183,6 +215,29 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 	if err := req.Validate(); err != nil {
 		return DKGOutput{}, err
 	}
+	return s.impl.RunDKGSession(ctx, buildDKGInput(req))
+}
+
+func (s *Service) AcquireDKGPreParams(ctx context.Context) (DKGPreParamsHandle, error) {
+	handle, err := s.impl.AcquireDKGPreParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &dkgPreParamsHandle{handle: handle}, nil
+}
+
+func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, req DKGSessionRequest, handle DKGPreParamsHandle) (DKGOutput, error) {
+	if err := req.Validate(); err != nil {
+		return DKGOutput{}, err
+	}
+	internalHandle, err := unwrapDKGPreParamsHandle(handle)
+	if err != nil {
+		return DKGOutput{}, err
+	}
+	return s.impl.RunDKGSessionWithPreParams(ctx, buildDKGInput(req), internalHandle)
+}
+
+func buildDKGInput(req DKGSessionRequest) tssservice.DKGInput {
 	var material tssservice.DKGDerivationMaterial
 	if req.DerivationMaterial != nil {
 		material = tssservice.DKGDerivationMaterial{
@@ -190,21 +245,22 @@ func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKG
 			DerivationScheme: req.DerivationMaterial.DerivationScheme,
 		}
 	}
-	return s.impl.RunDKGSession(ctx, tssservice.DKGInput{
-		SessionID:          req.Session.SessionID,
-		LocalPartyID:       req.LocalPartyID,
-		OrgID:              req.Session.OrgID,
-		KeyID:              req.Session.KeyID,
-		Parties:            req.Session.Parties,
-		Threshold:          req.Session.Threshold,
-		Curve:              req.Session.Curve,
-		Algorithm:          req.Session.Algorithm,
-		DerivationMaterial: material,
-		Transport:          req.Transport,
-		EmptyKeyErr:        ErrKeyIDRequired,
-		MissingPub:         ErrMissingDKGPublicKey,
-		MissingAddr:        ErrMissingDKGAddress,
-	})
+	return tssservice.DKGInput{
+		SessionID:                   req.Session.SessionID,
+		LocalPartyID:                req.LocalPartyID,
+		OrgID:                       req.Session.OrgID,
+		KeyID:                       req.Session.KeyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), req.OpaqueDescriptorFingerprint...),
+		Parties:                     req.Session.Parties,
+		Threshold:                   req.Session.Threshold,
+		Curve:                       req.Session.Curve,
+		Algorithm:                   req.Session.Algorithm,
+		DerivationMaterial:          material,
+		Transport:                   req.Transport,
+		EmptyKeyErr:                 ErrKeyIDRequired,
+		MissingPub:                  ErrMissingDKGPublicKey,
+		MissingAddr:                 ErrMissingDKGAddress,
+	}
 }
 
 func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) error {
@@ -233,16 +289,11 @@ func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) er
 		DerivationContextHash: hash,
 		Transport:             req.Transport,
 		EmptyKeyErr:           ErrShareNotFound,
-		MetadataMismatch:      ErrMetadataMismatch,
 	})
 }
 
 func (s *Service) ExportECDSASignature(key string) (common.SignatureData, error) {
 	return s.impl.ExportECDSASignature(key)
-}
-
-func (s *Service) ECDSAAddress(key string) (string, error) {
-	return s.impl.ECDSAAddress(key)
 }
 
 func (r DKGSessionRequest) Validate() error {
@@ -259,6 +310,18 @@ func (r DKGSessionRequest) Validate() error {
 	}, ErrInvalidSessionDescriptor, ErrLocalPartyRequired, ErrTransportRequired)
 	if err != nil {
 		return err
+	}
+	algorithm := strings.ToLower(strings.TrimSpace(r.Session.Algorithm))
+	if algorithm == "" {
+		algorithm = AlgorithmECDSA
+	}
+	curve := strings.ToLower(strings.TrimSpace(r.Session.Curve))
+	if curve == "" && algorithm == AlgorithmECDSA {
+		curve = CurveSecp256k1
+	}
+	if (algorithm != AlgorithmECDSA || curve != CurveSecp256k1) &&
+		(algorithm != AlgorithmEdDSA || curve != CurveEd25519) {
+		return ErrUnsupportedAlgorithmCurve
 	}
 	if corederivation.IsECDSAAlgorithm(r.Session.Algorithm) && strings.TrimSpace(r.Session.KeyID) == "" {
 		return ErrKeyIDRequired

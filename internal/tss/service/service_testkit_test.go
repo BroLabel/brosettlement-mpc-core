@@ -36,28 +36,20 @@ type stubRunner struct {
 	signatureExported   bool
 }
 
-func (r *stubRunner) ExportTemporaryECDSADKGShare(key string) (ecdsakeygen.LocalPartySaveData, error) {
-	r.events = append(r.events, "export:"+key)
-	r.exportedKeys = append(r.exportedKeys, key)
-	share, ok := r.shareByKey[key]
+func (r *stubRunner) ExportTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) (ecdsakeygen.LocalPartySaveData, error) {
+	r.events = append(r.events, "export:"+key.SessionID)
+	r.exportedKeys = append(r.exportedKeys, key.SessionID)
+	share, ok := r.shareByKey[key.SessionID]
 	if !ok {
 		return ecdsakeygen.LocalPartySaveData{}, errShareMissing
 	}
 	return share, nil
 }
 
-func (r *stubRunner) ExportECDSAKeyMaterial(key string) (coreshares.ECDSAKeyMaterial, error) {
-	r.events = append(r.events, "export-material:"+key)
-	if material, ok := r.materialByKey[key]; ok {
-		return material, nil
-	}
-	return coreshares.ECDSAKeyMaterial{}, errShareMissing
-}
-
-func (r *stubRunner) DeleteTemporaryECDSADKGShare(key string) {
-	r.events = append(r.events, "cleanup:"+key)
-	r.deletedKeys = append(r.deletedKeys, key)
-	delete(r.shareByKey, key)
+func (r *stubRunner) DeleteTemporaryECDSADKGShare(key tssbnbrunner.DKGRunKey) {
+	r.events = append(r.events, "cleanup:"+key.SessionID)
+	r.deletedKeys = append(r.deletedKeys, key.SessionID)
+	delete(r.shareByKey, key.SessionID)
 }
 
 func (r *stubRunner) RunDKG(_ context.Context, job tssbnbrunner.DKGJob, _ coretransport.FrameTransport) error {
@@ -80,21 +72,6 @@ func (r *stubRunner) RunSign(_ context.Context, job tssbnbrunner.SignJob, _ core
 func (r *stubRunner) ExportECDSASignature(string) (common.SignatureData, error) {
 	r.signatureExported = true
 	return common.SignatureData{}, nil
-}
-
-func (r *stubRunner) ImportECDSAKeyMaterial(key string, material coreshares.ECDSAKeyMaterial) {
-	if r.materialByKey == nil {
-		r.materialByKey = map[string]coreshares.ECDSAKeyMaterial{}
-	}
-	if r.shareByKey == nil {
-		r.shareByKey = map[string]ecdsakeygen.LocalPartySaveData{}
-	}
-	r.materialByKey[key] = material
-	r.shareByKey[key] = material.Share
-}
-
-func (r *stubRunner) ECDSAAddress(string) (string, error) {
-	return "", nil
 }
 
 func newTestLogger() *slog.Logger {
@@ -151,51 +128,65 @@ func (s *stubPreParamsSource) Acquire(context.Context) (*ecdsakeygen.LocalPrePar
 	return s.preParams, nil
 }
 
-type recordingShareStore struct {
-	savedKeyID string
-	savedBlob  []byte
-	savedMeta  coreshares.ShareMeta
+type recordingShareWriter struct {
+	savedInput coreshares.SaveShareInput
 	runner     *stubRunner
 	sessionID  string
 }
 
-func (s *recordingShareStore) SaveShare(_ context.Context, keyID string, blob []byte, meta coreshares.ShareMeta) error {
-	s.runner.events = append(s.runner.events, "persist:"+keyID)
+func (s *recordingShareWriter) SaveShare(_ context.Context, input coreshares.SaveShareInput) error {
+	s.runner.events = append(s.runner.events, "persist:"+input.KeyID)
 	if _, ok := s.runner.shareByKey[s.sessionID]; !ok {
 		return errors.New("share cleaned before persist")
 	}
-	s.savedKeyID = keyID
-	s.savedBlob = append([]byte(nil), blob...)
-	s.savedMeta = meta
+	s.savedInput = coreshares.SaveShareInput{
+		SessionID:                   input.SessionID,
+		KeyID:                       input.KeyID,
+		LocalPartyID:                input.LocalPartyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), input.OpaqueDescriptorFingerprint...),
+		CodecBlob:                   append([]byte(nil), input.CodecBlob...),
+	}
 	return nil
 }
 
-func (s *recordingShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
-	return nil, coreshares.ErrShareNotFound
-}
-
-type failingShareStore struct {
+type failingShareWriter struct {
 	err error
 }
 
-func (s *failingShareStore) SaveShare(context.Context, string, []byte, coreshares.ShareMeta) error {
+func (s *failingShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
 	return s.err
 }
 
-func (s *failingShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
-	return nil, coreshares.ErrShareNotFound
+type discardingShareWriter struct{}
+
+func (discardingShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
+	return nil
 }
 
-type staticShareStore struct {
+type mutatingShareWriter struct {
+	received coreshares.SaveShareInput
+}
+
+func (s *mutatingShareWriter) SaveShare(_ context.Context, input coreshares.SaveShareInput) error {
+	s.received = coreshares.SaveShareInput{
+		SessionID:                   input.SessionID,
+		KeyID:                       input.KeyID,
+		LocalPartyID:                input.LocalPartyID,
+		OpaqueDescriptorFingerprint: append([]byte(nil), input.OpaqueDescriptorFingerprint...),
+		CodecBlob:                   append([]byte(nil), input.CodecBlob...),
+	}
+	if len(input.OpaqueDescriptorFingerprint) > 0 {
+		input.OpaqueDescriptorFingerprint[0] ^= 0xff
+	}
+	return nil
+}
+
+type staticShareReader struct {
 	stored *coreshares.StoredShare
 	err    error
 }
 
-func (s staticShareStore) SaveShare(context.Context, string, []byte, coreshares.ShareMeta) error {
-	return nil
-}
-
-func (s staticShareStore) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
+func (s staticShareReader) LoadShare(context.Context, string) (*coreshares.StoredShare, error) {
 	if s.err != nil {
 		return nil, s.err
 	}

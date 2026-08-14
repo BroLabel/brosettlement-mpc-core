@@ -23,6 +23,7 @@ import (
 
 var (
 	ErrSignDigestRequired         = errors.New("sign digest is required")
+	ErrSignDigestMismatch         = errors.New("sign result digest mismatch")
 	ErrSignAlgorithmUnsupported   = errors.New("sign supports only ecdsa")
 	ErrKeyDerivationDeltaRequired = errors.New("key derivation delta is required")
 )
@@ -123,6 +124,11 @@ func RunSign(ctx context.Context, in SignRunInput) error {
 		return err
 	}
 	err = exec.Run(ctx, in.Transport)
+	if err == nil {
+		if sig := exec.Signature(); sig != nil {
+			err = deliverSignature(sig, job.Digest, in.OnSignature)
+		}
+	}
 	if err != nil {
 		kind, _, _ := tssbnbutils.ClassifyErr(err)
 		if kind == "timeout" && in.Metrics != nil {
@@ -132,9 +138,6 @@ func RunSign(ctx context.Context, in SignRunInput) error {
 			in.Metrics.IncSessionsFailed("sign", kind)
 		}
 	} else {
-		if sig := exec.Signature(); sig != nil && in.OnSignature != nil {
-			in.OnSignature(sig)
-		}
 		if in.Metrics != nil {
 			in.Metrics.IncSessionsSucceeded("sign")
 			in.Metrics.ObserveSessionDuration("sign", time.Since(started))
@@ -152,6 +155,23 @@ func RunSign(ctx context.Context, in SignRunInput) error {
 		"err", err,
 	)
 	return err
+}
+
+func deliverSignature(signature *common.SignatureData, digest []byte, onSignature func(*common.SignatureData)) error {
+	if new(big.Int).SetBytes(signature.GetM()).Cmp(new(big.Int).SetBytes(digest)) != 0 {
+		return ErrSignDigestMismatch
+	}
+	normalized := cloneSignatureFields(
+		signature.GetSignature(),
+		signature.GetSignatureRecovery(),
+		signature.GetR(),
+		signature.GetS(),
+		digest,
+	)
+	if onSignature != nil {
+		onSignature(normalized)
+	}
+	return nil
 }
 
 func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, logger *slog.Logger, debug bool, correlationID string, cfg tssbnbutils.RunnerConfig, metrics SignRunMetrics) (*execution.ProtocolExecution, error) {

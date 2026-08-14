@@ -15,6 +15,11 @@ type PreParamsPool interface {
 	Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 }
 
+type RefillController interface {
+	PauseRefill()
+	ResumeRefill()
+}
+
 func ResolvePreParamsSource(external PreParamsPool, fallback PreParamsPool) PreParamsPool {
 	if external != nil {
 		return external

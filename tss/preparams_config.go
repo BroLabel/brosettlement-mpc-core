@@ -8,28 +8,32 @@ import (
 )
 
 type PreParamsConfig struct {
-	Enabled             bool
-	TargetSize          int
-	MaxConcurrency      int
-	GenerateTimeout     time.Duration
-	AcquireTimeout      time.Duration
-	RetryBackoff        time.Duration
-	SyncFallbackOnEmpty bool
-	FileCacheEnabled    bool
-	FileCacheDir        string
+	Enabled               bool
+	TargetSize            int
+	MaxConcurrency        int
+	GenerationParallelism int
+	GenerateTimeout       time.Duration
+	AcquireTimeout        time.Duration
+	RetryBackoff          time.Duration
+	SyncFallbackOnEmpty   bool
+	AutoRefillOnAcquire   bool
+	FileCacheEnabled      bool
+	FileCacheDir          string
 }
 
 func DefaultPreParamsConfig() PreParamsConfig {
 	return PreParamsConfig{
-		Enabled:             true,
-		TargetSize:          5,
-		MaxConcurrency:      1,
-		GenerateTimeout:     7 * time.Minute,
-		AcquireTimeout:      45 * time.Second,
-		RetryBackoff:        2 * time.Second,
-		SyncFallbackOnEmpty: true,
-		FileCacheEnabled:    false,
-		FileCacheDir:        filepath.Join(".tmp", "tss-preparams"),
+		Enabled:               true,
+		TargetSize:            5,
+		MaxConcurrency:        1,
+		GenerationParallelism: 2,
+		GenerateTimeout:       7 * time.Minute,
+		AcquireTimeout:        45 * time.Second,
+		RetryBackoff:          2 * time.Second,
+		SyncFallbackOnEmpty:   true,
+		AutoRefillOnAcquire:   true,
+		FileCacheEnabled:      false,
+		FileCacheDir:          filepath.Join(".tmp", "tss-preparams"),
 	}
 }
 
@@ -38,10 +42,12 @@ func LoadPreParamsConfigFromEnv() PreParamsConfig {
 	cfg.Enabled = envBool("TSS_PREPARAMS_ENABLED", cfg.Enabled)
 	cfg.TargetSize = envInt("TSS_PREPARAMS_TARGET_SIZE", cfg.TargetSize)
 	cfg.MaxConcurrency = envInt("TSS_PREPARAMS_MAX_CONCURRENCY", cfg.MaxConcurrency)
+	cfg.GenerationParallelism = envInt("TSS_PREPARAMS_GENERATION_PARALLELISM", cfg.GenerationParallelism)
 	cfg.GenerateTimeout = envDuration("TSS_PREPARAMS_GENERATE_TIMEOUT", cfg.GenerateTimeout)
 	cfg.AcquireTimeout = envDuration("TSS_PREPARAMS_ACQUIRE_TIMEOUT", cfg.AcquireTimeout)
 	cfg.RetryBackoff = envDuration("TSS_PREPARAMS_RETRY_BACKOFF", cfg.RetryBackoff)
 	cfg.SyncFallbackOnEmpty = envBool("TSS_PREPARAMS_SYNC_FALLBACK_ON_EMPTY", cfg.SyncFallbackOnEmpty)
+	cfg.AutoRefillOnAcquire = envBool("TSS_PREPARAMS_AUTO_REFILL_ON_ACQUIRE", cfg.AutoRefillOnAcquire)
 	cfg.FileCacheEnabled = envBool("TSS_PREPARAMS_FILE_CACHE_ENABLED", cfg.FileCacheEnabled)
 	cfg.FileCacheDir = envString("TSS_PREPARAMS_FILE_CACHE_DIR", cfg.FileCacheDir)
 	return normalizePreParamsConfig(cfg)
@@ -56,6 +62,9 @@ func normalizePreParamsConfig(cfg PreParamsConfig) PreParamsConfig {
 	}
 	if cfg.MaxConcurrency > cfg.TargetSize {
 		cfg.MaxConcurrency = cfg.TargetSize
+	}
+	if cfg.GenerationParallelism < 1 {
+		cfg.GenerationParallelism = 2
 	}
 	if cfg.GenerateTimeout <= 0 {
 		cfg.GenerateTimeout = 7 * time.Minute

@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -149,6 +150,31 @@ type mpc2Of3Transport struct {
 	inbound <-chan protocol.Frame
 }
 
+type gatedMPC2Of3Transport struct {
+	Transport
+	round3Entered chan struct{}
+	releaseRound3 <-chan struct{}
+	round3Once    sync.Once
+}
+
+func (t *gatedMPC2Of3Transport) SendFrame(ctx context.Context, frame protocol.Frame) error {
+	shouldBlock := false
+	if strings.HasSuffix(frame.MessageType, ".KGRound3Message") {
+		t.round3Once.Do(func() {
+			shouldBlock = true
+			close(t.round3Entered)
+		})
+	}
+	if shouldBlock {
+		select {
+		case <-t.releaseRound3:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return t.Transport.SendFrame(ctx, frame)
+}
+
 func newMPC2Of3FrameBus(parties []string) (*mpc2Of3FrameBus, map[string]Transport) {
 	bus := &mpc2Of3FrameBus{endpoints: make(map[string]chan protocol.Frame, len(parties))}
 	transports := make(map[string]Transport, len(parties))
@@ -263,16 +289,35 @@ func runMPC2Of3DKG(t *testing.T) mpc2Of3Fixture {
 	}
 
 	_, transports := newMPC2Of3FrameBus(parties)
+	round3Entered := make(chan struct{})
+	releaseRound3 := make(chan struct{})
+	transports[mpc2Of3PartyA] = &gatedMPC2Of3Transport{
+		Transport:     transports[mpc2Of3PartyA],
+		round3Entered: round3Entered,
+		releaseRound3: releaseRound3,
+	}
+	releaseRound3Gate := func() {
+		select {
+		case <-releaseRound3:
+		default:
+			close(releaseRound3)
+		}
+	}
+	defer releaseRound3Gate()
 	sessionID := "mpc2of3-dkg-" + hex.EncodeToString(randomMPC2Of3Bytes(t, 8))
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 
 	outputs := make(map[string]DKGOutput, len(parties))
 	var outputsMu sync.Mutex
+	partyAReturned := make(chan struct{})
 	group, groupCtx := errgroup.WithContext(ctx)
 	for _, partyID := range parties {
 		partyID := partyID
 		group.Go(func() error {
+			if partyID == mpc2Of3PartyA {
+				defer close(partyAReturned)
+			}
 			output, err := dkgServices[partyID].RunDKGSession(groupCtx, DKGSessionRequest{
 				Session: DKGSessionDescriptor{
 					SessionID: sessionID,
@@ -300,6 +345,23 @@ func runMPC2Of3DKG(t *testing.T) mpc2Of3Fixture {
 			return nil
 		})
 	}
+	select {
+	case <-round3Entered:
+	case <-time.After(2 * time.Minute):
+		cancel()
+		releaseRound3Gate()
+		_ = group.Wait()
+		t.Fatal("timeout waiting for party A Round 3 SendFrame entry")
+	}
+	select {
+	case <-partyAReturned:
+		cancel()
+		releaseRound3Gate()
+		_ = group.Wait()
+		t.Fatal("party A returned while its Round 3 frame was blocked")
+	case <-time.After(100 * time.Millisecond):
+	}
+	releaseRound3Gate()
 	if err := group.Wait(); err != nil {
 		t.Fatal(err)
 	}

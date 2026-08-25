@@ -185,6 +185,15 @@ type blockingFirstShareWriter struct {
 	calls   int
 }
 
+type countingShareWriter struct {
+	calls int
+}
+
+func (w *countingShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
+	w.calls++
+	return nil
+}
+
 func (w *blockingFirstShareWriter) SaveShare(context.Context, coreshares.SaveShareInput) error {
 	w.mu.Lock()
 	w.calls++
@@ -361,14 +370,15 @@ func TestRunDKGSessionWithPreParamsConsumesBeforeRunnerAndBurnsOnError(t *testin
 		runErr:     runErr,
 	}
 	source := &sequentialPreParamsSource{values: []*ecdsakeygen.LocalPreParams{{}}}
-	svc := New(runner, newTestLogger(), nil, nil, discardingShareWriter{}, source)
+	writer := &countingShareWriter{}
+	svc := New(runner, newTestLogger(), nil, nil, writer, source)
 	handle, err := svc.AcquireDKGPreParams(context.Background())
 	if err != nil {
 		t.Fatalf("acquire handle failed: %v", err)
 	}
 	runner.handle = handle
 
-	_, err = svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{
+	output, err := svc.RunDKGSessionWithPreParams(context.Background(), DKGInput{
 		SessionID:          "session-1",
 		KeyID:              "session-1",
 		LocalPartyID:       "B",
@@ -381,6 +391,12 @@ func TestRunDKGSessionWithPreParamsConsumesBeforeRunnerAndBurnsOnError(t *testin
 	}, handle)
 	if !errors.Is(err, runErr) {
 		t.Fatalf("run error = %v, want runner error", err)
+	}
+	if output != (DKGOutput{}) {
+		t.Fatalf("output = %+v, want zero DKGOutput", output)
+	}
+	if writer.calls != 0 {
+		t.Fatalf("SaveShare calls = %d, want 0", writer.calls)
 	}
 	if !errors.Is(runner.discardErr, preparams.ErrPreParamsConsumed) {
 		t.Fatalf("discard at runner entry = %v, want ErrPreParamsConsumed", runner.discardErr)

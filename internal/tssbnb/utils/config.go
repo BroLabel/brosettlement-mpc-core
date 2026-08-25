@@ -19,7 +19,7 @@ type RunnerConfig struct {
 
 func DefaultRunnerConfig() RunnerConfig {
 	return RunnerConfig{
-		StallWarn:       15 * time.Second,
+		StallWarn:       30 * time.Second,
 		StallFail:       45 * time.Second,
 		StallWarnEvery:  30 * time.Second,
 		WatchdogTick:    5 * time.Second,

@@ -143,6 +143,37 @@ func assertDKGProtocolDone(t *testing.T, event protocolEvent, want ecdsakeygen.L
 	}
 }
 
+func TestHandleEventDKGCompletionPrefersCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	exec := newTestDKGExecution(nil, nil)
+	share := ecdsakeygen.LocalPartySaveData{
+		LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(42), ShareID: big.NewInt(7)},
+	}
+
+	done, state, err := exec.handleEvent(ctx, protocolEvent{
+		typ:    eventProtocolDone,
+		result: protocolResult{ecdsaKeyShare: &share},
+	})
+
+	if !done {
+		t.Fatal("DKG cancellation was not terminal")
+	}
+	if state != "canceled" {
+		t.Fatalf("terminal state = %q, want canceled", state)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("terminal error = %v, want context.Canceled", err)
+	}
+	if exec.ECDSAKeyShare() != nil {
+		t.Fatal("ECDSA key share accepted after cancellation")
+	}
+	if exec.protocolDoneFlag.Load() {
+		t.Fatal("protocol done flag set after cancellation")
+	}
+}
+
 func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 	t.Run("blocked_final_send", func(t *testing.T) {
 		outCh := make(chan tsslib.Message, 2)

@@ -184,7 +184,7 @@ func (e *ProtocolExecution) Run(ctx context.Context, transport Transport) (err e
 			terminalState = "canceled"
 			return ctx.Err()
 		case ev := <-rt.Events:
-			done, state, handleErr := e.handleEvent(ev)
+			done, state, handleErr := e.handleEvent(ctx, ev)
 			if !done {
 				continue
 			}
@@ -312,7 +312,7 @@ func (e *ProtocolExecution) waitSignProtocolDoneGrace(ctx context.Context) bool 
 	}
 }
 
-func (e *ProtocolExecution) handleEvent(ev protocolEvent) (done bool, state string, err error) {
+func (e *ProtocolExecution) handleEvent(ctx context.Context, ev protocolEvent) (done bool, state string, err error) {
 	switch ev.typ {
 	case eventInboundFrame:
 		e.stats.IncRecv()
@@ -327,6 +327,11 @@ func (e *ProtocolExecution) handleEvent(ev protocolEvent) (done bool, state stri
 	case eventRecvError:
 		return e.handleRecvError(ev.err)
 	case eventProtocolDone:
+		if ev.result.ecdsaKeyShare != nil {
+			if err := ctx.Err(); err != nil {
+				return true, "canceled", err
+			}
+		}
 		e.ecdsaKeyShare = ev.result.ecdsaKeyShare
 		e.signature = ev.result.signature
 		e.protocolDoneFlag.Store(true)

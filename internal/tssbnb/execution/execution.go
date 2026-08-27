@@ -184,14 +184,17 @@ func (e *ProtocolExecution) Run(ctx context.Context, transport Transport) (err e
 			terminalState = "canceled"
 			return ctx.Err()
 		case ev := <-rt.Events:
-			done, state, handleErr := e.handleEvent(ev)
+			done, state, handleErr := e.handleEvent(ctx, ev)
 			if !done {
 				continue
 			}
+			rt.Stop()
+			groupErr := <-groupErrCh
+			if ev.result.ecdsaKeyShare != nil {
+				state, handleErr = e.finishTerminalEvent(state, handleErr, groupErr)
+			}
 			terminalState = state
 			err = handleErr
-			rt.Stop()
-			<-groupErrCh
 			return err
 		case groupErr := <-groupErrCh:
 			terminalState, err = e.handleGroupResult(groupErr)
@@ -237,7 +240,7 @@ type protocolEvent struct {
 }
 
 func (e *ProtocolExecution) startWorkers(rt *sessionRuntime[protocolEvent], transport Transport) {
-	rt.Group.Go(func() error { return e.runOutboundPump(rt.Ctx, transport) })
+	rt.Group.Go(func() error { return e.runOutboundPump(rt, transport) })
 	rt.Group.Go(func() error { return e.runWatchdog(rt.Ctx) })
 	rt.Group.Go(func() error { return e.runRecvWorker(rt, transport) })
 	rt.Group.Go(func() error { return e.runProtocolResultWorker(rt) })
@@ -287,10 +290,6 @@ func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime[protocolE
 		select {
 		case <-rt.Ctx.Done():
 			return nil
-		case data := <-e.dkgECDSAEndCh:
-			d := data
-			rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{ecdsaKeyShare: &d}})
-			return nil
 		case sig := <-e.signECDSAEndCh:
 			if !e.waitSignProtocolDoneGrace(rt.Ctx) {
 				return nil
@@ -316,7 +315,7 @@ func (e *ProtocolExecution) waitSignProtocolDoneGrace(ctx context.Context) bool 
 	}
 }
 
-func (e *ProtocolExecution) handleEvent(ev protocolEvent) (done bool, state string, err error) {
+func (e *ProtocolExecution) handleEvent(ctx context.Context, ev protocolEvent) (done bool, state string, err error) {
 	switch ev.typ {
 	case eventInboundFrame:
 		e.stats.IncRecv()
@@ -331,6 +330,11 @@ func (e *ProtocolExecution) handleEvent(ev protocolEvent) (done bool, state stri
 	case eventRecvError:
 		return e.handleRecvError(ev.err)
 	case eventProtocolDone:
+		if ev.result.ecdsaKeyShare != nil {
+			if err := ctx.Err(); err != nil {
+				return true, "canceled", err
+			}
+		}
 		e.ecdsaKeyShare = ev.result.ecdsaKeyShare
 		e.signature = ev.result.signature
 		e.protocolDoneFlag.Store(true)
@@ -357,6 +361,15 @@ func (e *ProtocolExecution) handleGroupResult(groupErr error) (string, error) {
 		return "stalled", groupErr
 	}
 	return "failed", groupErr
+}
+
+func (e *ProtocolExecution) finishTerminalEvent(state string, eventErr, groupErr error) (string, error) {
+	if state != "success" || eventErr != nil || groupErr == nil {
+		return state, eventErr
+	}
+	e.ecdsaKeyShare = nil
+	e.protocolDoneFlag.Store(false)
+	return e.handleGroupResult(groupErr)
 }
 
 func (e *ProtocolExecution) handleRecvError(err error) (bool, string, error) {
@@ -396,26 +409,73 @@ func (e *ProtocolExecution) handleRecvError(err error) (bool, string, error) {
 	return true, "failed", err
 }
 
-func (e *ProtocolExecution) runOutboundPump(ctx context.Context, transport Transport) error {
+func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime[protocolEvent], transport Transport) error {
+	ctx := rt.Ctx
+	forward := func(msg tsslib.Message) error {
+		if err := e.forwardOutgoing(ctx, transport, msg); err != nil {
+			if e.debug {
+				e.logger.Debug("tss out pump send error",
+					"correlation_id", e.correlationID,
+					"session_id", e.sessionID,
+					"party_id", e.localPartyID,
+					"stage", e.stage,
+					"msg_type", msg.Type(),
+					"err", err,
+				)
+			}
+			return err
+		}
+		return nil
+	}
+	emitDKGDone := func(data ecdsakeygen.LocalPartySaveData) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		d := data
+		if rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{ecdsaKeyShare: &d}}) {
+			return nil
+		}
+		return rt.Ctx.Err()
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case msg, ok := <-e.outCh:
+			return ctx.Err()
+		// tss-lib outCh Round3 -> endCh result -> drain -> eventProtocolDone
+		case data, ok := <-e.dkgECDSAEndCh:
 			if !ok {
 				return nil
 			}
-			if err := e.forwardOutgoing(ctx, transport, msg); err != nil {
-				if e.debug {
-					e.logger.Debug("tss out pump send error",
-						"correlation_id", e.correlationID,
-						"session_id", e.sessionID,
-						"party_id", e.localPartyID,
-						"stage", e.stage,
-						"msg_type", msg.Type(),
-						"err", err,
-					)
+			for {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case msg, ok := <-e.outCh:
+					if !ok {
+						return emitDKGDone(data)
+					}
+					if err := forward(msg); err != nil {
+						return err
+					}
+				default:
+					return emitDKGDone(data)
 				}
+			}
+		case msg, ok := <-e.outCh:
+			if !ok {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case data, endOK := <-e.dkgECDSAEndCh:
+					if endOK {
+						return emitDKGDone(data)
+					}
+				default:
+				}
+				return nil
+			}
+			if err := forward(msg); err != nil {
 				return err
 			}
 		}

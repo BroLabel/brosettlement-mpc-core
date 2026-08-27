@@ -188,10 +188,13 @@ func (e *ProtocolExecution) Run(ctx context.Context, transport Transport) (err e
 			if !done {
 				continue
 			}
+			rt.Stop()
+			groupErr := <-groupErrCh
+			if ev.result.ecdsaKeyShare != nil {
+				state, handleErr = e.finishTerminalEvent(state, handleErr, groupErr)
+			}
 			terminalState = state
 			err = handleErr
-			rt.Stop()
-			<-groupErrCh
 			return err
 		case groupErr := <-groupErrCh:
 			terminalState, err = e.handleGroupResult(groupErr)
@@ -358,6 +361,15 @@ func (e *ProtocolExecution) handleGroupResult(groupErr error) (string, error) {
 		return "stalled", groupErr
 	}
 	return "failed", groupErr
+}
+
+func (e *ProtocolExecution) finishTerminalEvent(state string, eventErr, groupErr error) (string, error) {
+	if state != "success" || eventErr != nil || groupErr == nil {
+		return state, eventErr
+	}
+	e.ecdsaKeyShare = nil
+	e.protocolDoneFlag.Store(false)
+	return e.handleGroupResult(groupErr)
 }
 
 func (e *ProtocolExecution) handleRecvError(err error) (bool, string, error) {

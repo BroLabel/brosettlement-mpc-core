@@ -174,6 +174,35 @@ func TestHandleEventDKGCompletionPrefersCanceledContext(t *testing.T) {
 	}
 }
 
+func TestTerminalDKGCompletionPrefersWorkerFailure(t *testing.T) {
+	exec := newTestDKGExecution(nil, nil)
+	share := ecdsakeygen.LocalPartySaveData{
+		LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(42), ShareID: big.NewInt(7)},
+	}
+
+	done, state, eventErr := exec.handleEvent(context.Background(), protocolEvent{
+		typ:    eventProtocolDone,
+		result: protocolResult{ecdsaKeyShare: &share},
+	})
+	if !done || state != "success" || eventErr != nil {
+		t.Fatalf("DKG completion = (%t, %q, %v), want successful terminal event", done, state, eventErr)
+	}
+
+	state, err := exec.finishTerminalEvent(state, eventErr, ErrStalledProtocol)
+	if state != "stalled" {
+		t.Fatalf("terminal state = %q, want stalled", state)
+	}
+	if !errors.Is(err, ErrStalledProtocol) {
+		t.Fatalf("terminal error = %v, want ErrStalledProtocol", err)
+	}
+	if exec.ECDSAKeyShare() != nil {
+		t.Fatal("ECDSA key share remained accepted after worker failure")
+	}
+	if exec.protocolDoneFlag.Load() {
+		t.Fatal("protocol done flag remained set after worker failure")
+	}
+}
+
 func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 	t.Run("blocked_final_send", func(t *testing.T) {
 		outCh := make(chan tsslib.Message, 2)

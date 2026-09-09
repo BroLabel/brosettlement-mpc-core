@@ -73,16 +73,45 @@ func (sendOnlyTransport) RecvFrame(context.Context) (protocol.Frame, error) {
 	return protocol.Frame{}, io.EOF
 }
 
+type testTransport struct {
+	send func(context.Context, protocol.Frame) error
+	recv func(context.Context) (protocol.Frame, error)
+}
+
+func (m testTransport) SendFrame(ctx context.Context, frame protocol.Frame) error {
+	return m.send(ctx, frame)
+}
+
+func (m testTransport) RecvFrame(ctx context.Context) (protocol.Frame, error) {
+	return m.recv(ctx)
+}
+
+type gatedWriter struct {
+	once    sync.Once
+	entered chan struct{}
+	release <-chan struct{}
+}
+
+func (w *gatedWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.entered) })
+	<-w.release
+	return len(p), nil
+}
+
 type testOutboundMessage struct {
 	messageType string
 	payload     []byte
 	from        *tsslib.PartyID
+	to          []*tsslib.PartyID
+	broadcast   bool
+	wireEntered chan struct{}
+	wireRelease <-chan struct{}
 }
 
 func (m testOutboundMessage) Type() string                  { return m.messageType }
-func (m testOutboundMessage) GetTo() []*tsslib.PartyID      { return nil }
+func (m testOutboundMessage) GetTo() []*tsslib.PartyID      { return m.to }
 func (m testOutboundMessage) GetFrom() *tsslib.PartyID      { return m.from }
-func (m testOutboundMessage) IsBroadcast() bool             { return true }
+func (m testOutboundMessage) IsBroadcast() bool             { return m.broadcast }
 func (m testOutboundMessage) IsToOldCommittee() bool        { return false }
 func (m testOutboundMessage) IsToOldAndNewCommittees() bool { return false }
 func (m testOutboundMessage) WireMsg() *tsslib.MessageWrapper {
@@ -90,9 +119,14 @@ func (m testOutboundMessage) WireMsg() *tsslib.MessageWrapper {
 }
 func (m testOutboundMessage) String() string { return m.messageType }
 func (m testOutboundMessage) WireBytes() ([]byte, *tsslib.MessageRouting, error) {
+	if m.wireEntered != nil {
+		close(m.wireEntered)
+		<-m.wireRelease
+	}
 	return append([]byte(nil), m.payload...), &tsslib.MessageRouting{
 		From:        m.from,
-		IsBroadcast: true,
+		To:          m.to,
+		IsBroadcast: m.broadcast,
 	}, nil
 }
 
@@ -101,6 +135,7 @@ func newTestOutboundMessage(payload string) tsslib.Message {
 		messageType: "binance.tsslib.ecdsa.keygen.KGRound3Message",
 		payload:     []byte(payload),
 		from:        tsslib.NewPartyID("A", "A", big.NewInt(1)),
+		broadcast:   true,
 	}
 }
 
@@ -126,6 +161,15 @@ func waitForProtocolEvent(t *testing.T, events <-chan protocolEvent) protocolEve
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for protocol event")
 		return protocolEvent{}
+	}
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for %s", name)
 	}
 }
 
@@ -466,6 +510,120 @@ func TestTerminalDKGCompletionPrefersWorkerFailure(t *testing.T) {
 	}
 }
 
+func TestTerminalSignCompletionRejectsIndependentTransportCancellation(t *testing.T) {
+	exec := New(Params{
+		Stage:   "sign",
+		Config:  tssbnbutils.DefaultRunnerConfig(),
+		Metrics: testMetrics{},
+	})
+	signature := &common.SignatureData{Signature: []byte("candidate")}
+
+	done, state, eventErr := exec.handleEvent(context.Background(), protocolEvent{
+		typ:    eventProtocolDone,
+		result: protocolResult{signature: signature},
+	})
+	if !done || state != "success" || eventErr != nil {
+		t.Fatalf("SIGN completion = (%t, %q, %v), want successful terminal event", done, state, eventErr)
+	}
+
+	state, err := exec.finishTerminalEvent(state, eventErr, context.Canceled)
+	if state == "success" || err == nil {
+		t.Fatalf("terminal result = (%q, %v), want transport cancellation failure", state, err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("terminal error = %v, want context.Canceled", err)
+	}
+	if exec.Signature() != nil {
+		t.Fatal("signature remained accepted after independent transport cancellation")
+	}
+	if exec.protocolDoneFlag.Load() {
+		t.Fatal("protocol done flag remained set after independent transport cancellation")
+	}
+}
+
+func TestProtocolExecutionTerminalEventRejectsIndependentTransportCancellation(t *testing.T) {
+	releaseStart := make(chan struct{})
+	close(releaseStart)
+	party := &gatedStartParty{entered: make(chan struct{}), release: releaseStart}
+	outCh := make(chan tsslib.Message, 1)
+	outCh <- newTestOutboundMessage("transport-cancel")
+	doneCh := make(chan struct{})
+	logEntered := make(chan struct{})
+	releaseLog := make(chan struct{})
+	logger := slog.New(slog.NewTextHandler(&gatedWriter{
+		entered: logEntered,
+		release: releaseLog,
+	}, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	exec := New(Params{
+		SessionID:    "terminal-transport-cancel",
+		LocalPartyID: "A",
+		Stage:        "sign",
+		Algorithm:    "ecdsa",
+		Party:        party,
+		OutCh:        outCh,
+		DoneCh:       doneCh,
+		Logger:       logger,
+		Debug:        true,
+		Config:       tssbnbutils.DefaultRunnerConfig(),
+		Metrics:      testMetrics{},
+	})
+
+	sendEntered := make(chan struct{})
+	releaseSend := make(chan struct{})
+	transport := testTransport{
+		send: func(context.Context, protocol.Frame) error {
+			close(sendEntered)
+			<-releaseSend
+			return context.Canceled
+		},
+		recv: func(ctx context.Context) (protocol.Frame, error) {
+			<-ctx.Done()
+			return protocol.Frame{}, ctx.Err()
+		},
+	}
+
+	runErrCh := make(chan error, 1)
+	go func() { runErrCh <- exec.Run(context.Background(), transport) }()
+	waitForSignal(t, party.entered, "Party.Start entry")
+	waitForSignal(t, sendEntered, "SendFrame entry")
+	close(releaseSend)
+	waitForSignal(t, logEntered, "independent transport cancellation log")
+
+	doneSent := make(chan struct{})
+	go func() {
+		doneCh <- struct{}{}
+		close(doneSent)
+	}()
+	waitForSignal(t, doneSent, "terminal result receive")
+
+	deadline := time.After(2 * time.Second)
+	for !exec.protocolDoneFlag.Load() {
+		select {
+		case err := <-runErrCh:
+			close(releaseLog)
+			t.Fatalf("Run returned before reconciling terminal event: %v", err)
+		case <-deadline:
+			close(releaseLog)
+			t.Fatal("timeout waiting for terminal event reconciliation")
+		default:
+			runtime.Gosched()
+		}
+	}
+	close(releaseLog)
+
+	select {
+	case err := <-runErrCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run error = %v, want independent context cancellation", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for Run after independent transport cancellation")
+	}
+	if exec.protocolDoneFlag.Load() {
+		t.Fatal("protocol done flag remained set after independent transport cancellation")
+	}
+}
+
 func TestTerminalSignCompletionPrefersWorkerFailure(t *testing.T) {
 	startErr := errors.New("start failed after sign result")
 	releaseStart := make(chan struct{})
@@ -687,6 +845,71 @@ func TestOutboundTransportCancellationBeforeStopFails(t *testing.T) {
 	}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("runOutboundPump error = %v, want context.Canceled", err)
+	}
+}
+
+func TestForwardOutgoingCancellationDuringEncodingSkipsBroadcastSend(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	wireEntered := make(chan struct{})
+	releaseWire := make(chan struct{})
+	msg := testOutboundMessage{
+		messageType: "binance.tsslib.ecdsa.keygen.KGRound3Message",
+		payload:     []byte("broadcast"),
+		from:        tsslib.NewPartyID("A", "A", big.NewInt(1)),
+		broadcast:   true,
+		wireEntered: wireEntered,
+		wireRelease: releaseWire,
+	}
+	sendCalls := 0
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- newTestDKGExecution(nil, nil).forwardOutgoing(ctx, sendOnlyTransport{
+			send: func(context.Context, protocol.Frame) error {
+				sendCalls++
+				return nil
+			},
+		}, msg)
+	}()
+
+	waitForSignal(t, wireEntered, "WireBytes entry")
+	cancel()
+	close(releaseWire)
+	if err := waitForPumpResult(t, errCh); !errors.Is(err, context.Canceled) {
+		t.Fatalf("forwardOutgoing error = %v, want context.Canceled", err)
+	}
+	if sendCalls != 0 {
+		t.Fatalf("SendFrame calls = %d, want 0 after cancellation during encoding", sendCalls)
+	}
+}
+
+func TestForwardOutgoingCancellationDuringFirstRecipientSkipsRemainingRecipients(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	msg := testOutboundMessage{
+		messageType: "binance.tsslib.ecdsa.keygen.KGRound3Message",
+		payload:     []byte("p2p"),
+		from:        tsslib.NewPartyID("A", "A", big.NewInt(1)),
+		to: []*tsslib.PartyID{
+			tsslib.NewPartyID("B", "B", big.NewInt(2)),
+			tsslib.NewPartyID("C", "C", big.NewInt(3)),
+		},
+	}
+	var sentTo []string
+	err := newTestDKGExecution(nil, nil).forwardOutgoing(ctx, sendOnlyTransport{
+		send: func(_ context.Context, frame protocol.Frame) error {
+			sentTo = append(sentTo, frame.ToParty)
+			if len(sentTo) == 1 {
+				cancel()
+			}
+			return nil
+		},
+	}, msg)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("forwardOutgoing error = %v, want context.Canceled", err)
+	}
+	if len(sentTo) != 1 || sentTo[0] != "B" {
+		t.Fatalf("sent recipients = %v, want only [B]", sentTo)
 	}
 }
 

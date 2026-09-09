@@ -47,6 +47,20 @@ type Transport interface {
 	RecvFrame(ctx context.Context) (protocol.Frame, error)
 }
 
+type cancellationProvenanceTransport struct {
+	Transport
+	stopping                func() bool
+	independentCancellation bool
+}
+
+func (t *cancellationProvenanceTransport) SendFrame(ctx context.Context, frame protocol.Frame) error {
+	err := t.Transport.SendFrame(ctx, frame)
+	if errors.Is(err, context.Canceled) && !t.stopping() {
+		t.independentCancellation = true
+	}
+	return err
+}
+
 type Params struct {
 	SessionID             string
 	LocalPartyID          string
@@ -414,7 +428,7 @@ func (e *ProtocolExecution) handleGroupResult(groupErr error) (string, error) {
 }
 
 func (e *ProtocolExecution) finishTerminalEvent(state string, eventErr, groupErr error) (string, error) {
-	if state != "success" || eventErr != nil || groupErr == nil || errors.Is(groupErr, context.Canceled) {
+	if state != "success" || eventErr != nil || groupErr == nil {
 		return state, eventErr
 	}
 	e.ecdsaKeyShare = nil
@@ -463,7 +477,13 @@ func (e *ProtocolExecution) handleRecvError(err error) (bool, string, error) {
 func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime[protocolEvent], transport Transport) error {
 	ctx := rt.Ctx
 	forward := func(msg tsslib.Message) error {
-		if err := e.forwardOutgoing(ctx, transport, msg); err != nil {
+		trackedTransport := &cancellationProvenanceTransport{
+			Transport: transport,
+			stopping:  rt.Stopping,
+		}
+		if err := e.forwardOutgoing(ctx, trackedTransport, msg); err != nil {
+			ownerCanceled := errors.Is(err, context.Canceled) &&
+				!trackedTransport.independentCancellation && rt.Stopping()
 			if e.debug {
 				e.logger.Debug("tss out pump send error",
 					"correlation_id", e.correlationID,
@@ -474,7 +494,7 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime[protocolEvent], t
 					"err", err,
 				)
 			}
-			if errors.Is(err, context.Canceled) && rt.Stopping() {
+			if ownerCanceled {
 				return nil
 			}
 			return err
@@ -750,6 +770,9 @@ func (e *ProtocolExecution) forwardOutgoing(ctx context.Context, transport Trans
 	})
 
 	if routing.IsBroadcast || len(routing.To) == 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := transport.SendFrame(ctx, base); err != nil {
 			if e.debug {
 				e.logger.Debug("tss transport send failed",
@@ -774,6 +797,9 @@ func (e *ProtocolExecution) forwardOutgoing(ctx context.Context, transport Trans
 	for _, to := range routing.To {
 		frame := base
 		frame.ToParty = to.Id
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := transport.SendFrame(ctx, frame); err != nil {
 			if e.debug {
 				e.logger.Debug("tss transport send failed",

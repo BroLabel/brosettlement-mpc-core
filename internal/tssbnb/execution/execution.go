@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
@@ -23,6 +24,7 @@ import (
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	eddsakeygen "github.com/bnb-chain/tss-lib/eddsa/keygen"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
 
@@ -61,7 +63,8 @@ type Params struct {
 	Metrics               bnbutils.Metrics
 
 	DKGECDSAEndCh  <-chan ecdsakeygen.LocalPartySaveData
-	SignECDSAEndCh <-chan *common.SignatureData
+	DKGEdDSAEndCh  <-chan eddsakeygen.LocalPartySaveData
+	SignECDSAEndCh <-chan common.SignatureData
 	DoneCh         <-chan struct{}
 }
 
@@ -87,7 +90,8 @@ type ProtocolExecution struct {
 	metrics               bnbutils.Metrics
 
 	dkgECDSAEndCh  <-chan ecdsakeygen.LocalPartySaveData
-	signECDSAEndCh <-chan *common.SignatureData
+	dkgEdDSAEndCh  <-chan eddsakeygen.LocalPartySaveData
+	signECDSAEndCh <-chan common.SignatureData
 	doneCh         <-chan struct{}
 
 	ecdsaKeyShare *ecdsakeygen.LocalPartySaveData
@@ -122,6 +126,7 @@ func New(p Params) *ProtocolExecution {
 		cfg:                   p.Config,
 		metrics:               p.Metrics,
 		dkgECDSAEndCh:         p.DKGECDSAEndCh,
+		dkgEdDSAEndCh:         p.DKGEdDSAEndCh,
 		signECDSAEndCh:        p.SignECDSAEndCh,
 		doneCh:                p.DoneCh,
 		stats:                 &protocolStats{},
@@ -177,26 +182,37 @@ func (e *ProtocolExecution) Run(ctx context.Context, transport Transport) (err e
 		groupErrCh <- rt.Group.Wait()
 		close(groupErrCh)
 	}()
+	workersJoined := false
+	var joinedGroupErr error
+	joinWorkers := func() error {
+		if !workersJoined {
+			rt.Stop()
+			joinedGroupErr = <-groupErrCh
+			workersJoined = true
+		}
+		return joinedGroupErr
+	}
+	defer joinWorkers()
 
 	for {
 		select {
 		case <-ctx.Done():
 			terminalState = "canceled"
+			joinWorkers()
 			return ctx.Err()
 		case ev := <-rt.Events:
 			done, state, handleErr := e.handleEvent(ctx, ev)
 			if !done {
 				continue
 			}
-			rt.Stop()
-			groupErr := <-groupErrCh
-			if ev.result.ecdsaKeyShare != nil {
-				state, handleErr = e.finishTerminalEvent(state, handleErr, groupErr)
-			}
+			groupErr := joinWorkers()
+			state, handleErr = e.finishTerminalEvent(state, handleErr, groupErr)
 			terminalState = state
 			err = handleErr
 			return err
 		case groupErr := <-groupErrCh:
+			workersJoined = true
+			joinedGroupErr = groupErr
 			terminalState, err = e.handleGroupResult(groupErr)
 			return err
 		}
@@ -255,15 +271,20 @@ func (e *ProtocolExecution) startWorkers(rt *sessionRuntime[protocolEvent], tran
 func (e *ProtocolExecution) runRecvWorker(rt *sessionRuntime[protocolEvent], transport Transport) error {
 	inboundCh := make(chan protocol.Frame, e.cfg.InboundQueueCap)
 	recvErrCh := make(chan error, 1)
-	go tssbnbutils.RecvLoop(
-		rt.Ctx,
-		transport.RecvFrame,
-		inboundCh,
-		recvErrCh,
-		e.cfg.MaxFrameBytes,
-		ErrFrameTooLarge,
-		ErrQueueFull,
-	)
+	recvLoopDone := make(chan struct{})
+	go func() {
+		defer close(recvLoopDone)
+		tssbnbutils.RecvLoop(
+			rt.Ctx,
+			transport.RecvFrame,
+			inboundCh,
+			recvErrCh,
+			e.cfg.MaxFrameBytes,
+			ErrFrameTooLarge,
+			ErrQueueFull,
+		)
+	}()
+	defer func() { <-recvLoopDone }()
 
 	for {
 		select {
@@ -286,20 +307,51 @@ func (e *ProtocolExecution) runRecvWorker(rt *sessionRuntime[protocolEvent], tra
 }
 
 func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime[protocolEvent]) error {
-	for {
-		select {
-		case <-rt.Ctx.Done():
-			return nil
-		case sig := <-e.signECDSAEndCh:
-			if !e.waitSignProtocolDoneGrace(rt.Ctx) {
-				return nil
-			}
-			rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{signature: sig}})
-			return nil
-		case <-e.doneCh:
-			rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{}})
+	cases := []reflect.SelectCase{
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(rt.Ctx.Done())},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(e.signECDSAEndCh)},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(e.dkgEdDSAEndCh)},
+		{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(e.doneCh)},
+	}
+	chosen, value, ok := reflect.Select(cases)
+	switch chosen {
+	case 0:
+		return nil
+	case 1:
+		if !ok {
+			return io.ErrUnexpectedEOF
+		}
+		sig := cloneSignatureDataValue(value)
+		if !e.waitSignProtocolDoneGrace(rt.Ctx) {
 			return nil
 		}
+		rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{signature: sig}})
+		return nil
+	case 2, 3:
+		if !ok {
+			return io.ErrUnexpectedEOF
+		}
+		rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{}})
+		return nil
+	default:
+		return io.ErrUnexpectedEOF
+	}
+}
+
+func cloneSignatureDataValue(value reflect.Value) *common.SignatureData {
+	fieldBytes := func(name string) []byte {
+		field := value.FieldByName(name)
+		if !field.IsValid() || field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.Uint8 {
+			return nil
+		}
+		return append([]byte(nil), field.Bytes()...)
+	}
+	return &common.SignatureData{
+		Signature:         fieldBytes("Signature"),
+		SignatureRecovery: fieldBytes("SignatureRecovery"),
+		R:                 fieldBytes("R"),
+		S:                 fieldBytes("S"),
+		M:                 fieldBytes("M"),
 	}
 }
 
@@ -330,10 +382,8 @@ func (e *ProtocolExecution) handleEvent(ctx context.Context, ev protocolEvent) (
 	case eventRecvError:
 		return e.handleRecvError(ev.err)
 	case eventProtocolDone:
-		if ev.result.ecdsaKeyShare != nil {
-			if err := ctx.Err(); err != nil {
-				return true, "canceled", err
-			}
+		if err := ctx.Err(); err != nil {
+			return true, "canceled", err
 		}
 		e.ecdsaKeyShare = ev.result.ecdsaKeyShare
 		e.signature = ev.result.signature
@@ -364,10 +414,11 @@ func (e *ProtocolExecution) handleGroupResult(groupErr error) (string, error) {
 }
 
 func (e *ProtocolExecution) finishTerminalEvent(state string, eventErr, groupErr error) (string, error) {
-	if state != "success" || eventErr != nil || groupErr == nil {
+	if state != "success" || eventErr != nil || groupErr == nil || errors.Is(groupErr, context.Canceled) {
 		return state, eventErr
 	}
 	e.ecdsaKeyShare = nil
+	e.signature = nil
 	e.protocolDoneFlag.Store(false)
 	return e.handleGroupResult(groupErr)
 }
@@ -423,34 +474,43 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime[protocolEvent], t
 					"err", err,
 				)
 			}
+			if errors.Is(err, context.Canceled) && rt.Stopping() {
+				return nil
+			}
 			return err
 		}
 		return nil
 	}
 	emitDKGDone := func(data ecdsakeygen.LocalPartySaveData) error {
 		if err := ctx.Err(); err != nil {
-			return err
+			return rt.StopError()
 		}
 		d := data
 		if rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{ecdsaKeyShare: &d}}) {
 			return nil
 		}
-		return rt.Ctx.Err()
+		return rt.StopError()
 	}
 
 	for {
+		if ctx.Err() != nil {
+			return rt.StopError()
+		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return rt.StopError()
 		// tss-lib outCh Round3 -> endCh result -> drain -> eventProtocolDone
 		case data, ok := <-e.dkgECDSAEndCh:
 			if !ok {
-				return nil
+				return io.ErrUnexpectedEOF
 			}
 			for {
+				if ctx.Err() != nil {
+					return rt.StopError()
+				}
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return rt.StopError()
 				case msg, ok := <-e.outCh:
 					if !ok {
 						return emitDKGDone(data)
@@ -466,11 +526,12 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime[protocolEvent], t
 			if !ok {
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return rt.StopError()
 				case data, endOK := <-e.dkgECDSAEndCh:
 					if endOK {
 						return emitDKGDone(data)
 					}
+					return io.ErrUnexpectedEOF
 				default:
 				}
 				return nil
@@ -666,6 +727,9 @@ func (e *ProtocolExecution) newOutboundBaseFrame(in outboundFrameInput) protocol
 }
 
 func (e *ProtocolExecution) forwardOutgoing(ctx context.Context, transport Transport, msg tsslib.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	msgType := msg.Type()
 	roundHint := inferRoundHint(msgType)
 	payload, routing, err := msg.WireBytes()

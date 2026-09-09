@@ -2,15 +2,17 @@ package execution
 
 import (
 	"context"
+	"sync/atomic"
 
 	"golang.org/x/sync/errgroup"
 )
 
 type sessionRuntime[T any] struct {
-	Ctx    context.Context
-	cancel context.CancelFunc
-	Group  *errgroup.Group
-	Events chan T
+	Ctx      context.Context
+	cancel   context.CancelFunc
+	Group    *errgroup.Group
+	Events   chan T
+	stopping atomic.Bool
 }
 
 func newSessionRuntime[T any](parent context.Context, eventBuf int) *sessionRuntime[T] {
@@ -38,5 +40,17 @@ func (rt *sessionRuntime[T]) Emit(ev T) bool {
 }
 
 func (rt *sessionRuntime[T]) Stop() {
+	rt.stopping.Store(true)
 	rt.cancel()
+}
+
+func (rt *sessionRuntime[T]) StopError() error {
+	if rt.stopping.Load() {
+		return nil
+	}
+	return rt.Ctx.Err()
+}
+
+func (rt *sessionRuntime[T]) Stopping() bool {
+	return rt.stopping.Load()
 }

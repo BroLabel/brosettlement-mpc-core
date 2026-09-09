@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"math/big"
+	"runtime"
 	"testing"
+	"time"
 
+	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
@@ -28,6 +31,35 @@ func TestSignBuildInputCarriesKeyDerivationDelta(t *testing.T) {
 	in := SignBuildInput{KeyDerivationDelta: big.NewInt(42)}
 	if in.KeyDerivationDelta.Sign() != 1 {
 		t.Fatalf("unexpected delta: %v", in.KeyDerivationDelta)
+	}
+}
+
+func TestBuildSignDoesNotStartDetachedResultBridge(t *testing.T) {
+	params, _, _, err := tssbnbutils.BuildParams([]string{"A", "B"}, "A", 2, "", "ecdsa")
+	if err != nil {
+		t.Fatalf("BuildParams() error = %v", err)
+	}
+	share := ecdsakeygen.NewLocalPartySaveData(2)
+	for i, partyID := range params.Parties().IDs() {
+		share.Ks[i] = new(big.Int).Set(partyID.KeyInt())
+	}
+
+	before := runtime.NumGoroutine()
+	for range 16 {
+		if _, err := BuildSign(SignBuildInput{
+			Digest:             []byte{1},
+			Params:             params,
+			KeyShare:           share,
+			KeyDerivationDelta: big.NewInt(1),
+			OutCh:              make(chan tsslib.Message),
+		}); err != nil {
+			t.Fatalf("BuildSign() error = %v", err)
+		}
+	}
+	runtime.Gosched()
+	after := runtime.NumGoroutine()
+	if after > before+2 {
+		t.Fatalf("BuildSign() goroutines grew from %d to %d; detached result bridges remain", before, after)
 	}
 }
 
@@ -92,5 +124,39 @@ func TestDeliverSignatureRejectsNumericallyDifferentDigest(t *testing.T) {
 	}
 	if !bytes.Equal(tssResult.GetM(), []byte{0x02}) || !bytes.Equal(digest, []byte{0x00, 0x01}) {
 		t.Fatal("deliverSignature() mutated mismatched inputs")
+	}
+}
+
+func TestDeliverSignatureWaitsForCallback(t *testing.T) {
+	digest := []byte{0x01}
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	resultCh := make(chan error, 1)
+	go func() {
+		resultCh <- deliverSignature(&common.SignatureData{M: digest}, digest, func(*common.SignatureData) {
+			close(callbackEntered)
+			<-releaseCallback
+		})
+	}()
+
+	select {
+	case <-callbackEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for signature callback entry")
+	}
+	select {
+	case err := <-resultCh:
+		close(releaseCallback)
+		t.Fatalf("deliverSignature() returned before callback exited: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseCallback)
+	select {
+	case err := <-resultCh:
+		if err != nil {
+			t.Fatalf("deliverSignature() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for deliverSignature() after callback exit")
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
-	"reflect"
 	"strings"
 	"time"
 
@@ -38,7 +37,7 @@ type SignBuildInput struct {
 
 type SignBuildOutput struct {
 	Party tsslib.Party
-	End   <-chan *common.SignatureData
+	End   <-chan common.SignatureData
 }
 
 type SignRunJob struct {
@@ -69,17 +68,10 @@ func BuildSign(in SignBuildInput) (SignBuildOutput, error) {
 	if in.KeyDerivationDelta == nil {
 		return SignBuildOutput{}, ErrKeyDerivationDeltaRequired
 	}
-	rawEndCh := make(chan *common.SignatureData, 1)
-
 	tssEndCh := make(chan common.SignatureData, 1)
 	msg := new(big.Int).SetBytes(in.Digest)
 	party := ecdsasigning.NewLocalPartyWithKDD(msg, in.Params, in.KeyShare, in.KeyDerivationDelta, in.OutCh, tssEndCh)
-	go func() {
-		defer close(rawEndCh)
-
-		rawEndCh <- recvSignatureData(tssEndCh)
-	}()
-	return SignBuildOutput{Party: party, End: rawEndCh}, nil
+	return SignBuildOutput{Party: party, End: tssEndCh}, nil
 }
 
 func RunSign(ctx context.Context, in SignRunInput) error {
@@ -207,28 +199,6 @@ func newSignExecution(job SignRunJob, keyShare ecdsakeygen.LocalPartySaveData, l
 		Metrics:               metrics,
 		SignECDSAEndCh:        built.End,
 	}), nil
-}
-
-func recvSignatureData(ch <-chan common.SignatureData) *common.SignatureData {
-	v, ok := reflect.ValueOf(ch).Recv()
-	if !ok {
-		return nil
-	}
-	return cloneSignatureFields(
-		signatureDataBytes(v, "Signature"),
-		signatureDataBytes(v, "SignatureRecovery"),
-		signatureDataBytes(v, "R"),
-		signatureDataBytes(v, "S"),
-		signatureDataBytes(v, "M"),
-	)
-}
-
-func signatureDataBytes(v reflect.Value, field string) []byte {
-	f := v.FieldByName(field)
-	if !f.IsValid() || f.Kind() != reflect.Slice || f.Type().Elem().Kind() != reflect.Uint8 {
-		return nil
-	}
-	return f.Bytes()
 }
 
 func cloneSignatureFields(signature, recovery, r, s, m []byte) *common.SignatureData {

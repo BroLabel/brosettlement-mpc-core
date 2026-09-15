@@ -695,7 +695,7 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 		outCh <- newTestOutboundMessage("round3-final")
 		endCh <- share
 
-		rt := newSessionRuntime[protocolEvent](context.Background(), 4)
+		rt := newSessionRuntime(context.Background(), 4)
 		defer rt.Stop()
 		secondSendEntered := make(chan struct{})
 		releaseSecondSend := make(chan struct{})
@@ -757,7 +757,7 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 		endCh <- share
 		close(outCh)
 
-		rt := newSessionRuntime[protocolEvent](context.Background(), 4)
+		rt := newSessionRuntime(context.Background(), 4)
 		defer rt.Stop()
 		errCh := make(chan error, 1)
 		transport := sendOnlyTransport{send: func(context.Context, protocol.Frame) error { return nil }}
@@ -780,7 +780,7 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 			LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(126), ShareID: big.NewInt(11)},
 		}
 
-		rt := newSessionRuntime[protocolEvent](context.Background(), 4)
+		rt := newSessionRuntime(context.Background(), 4)
 		defer rt.Stop()
 		sendCalls := 0
 		transport := sendOnlyTransport{send: func(context.Context, protocol.Frame) error {
@@ -808,7 +808,7 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
-		rt := newSessionRuntime[protocolEvent](ctx, 4)
+		rt := newSessionRuntime(ctx, 4)
 		defer rt.Stop()
 		sendEntered := make(chan struct{})
 		transport := sendOnlyTransport{send: func(ctx context.Context, _ protocol.Frame) error {
@@ -836,7 +836,7 @@ func TestOutboundTransportCancellationBeforeStopFails(t *testing.T) {
 	outCh := make(chan tsslib.Message, 1)
 	outCh <- newTestOutboundMessage("send")
 	close(outCh)
-	rt := newSessionRuntime[protocolEvent](context.Background(), 1)
+	rt := newSessionRuntime(context.Background(), 1)
 	defer rt.Stop()
 	exec := newTestDKGExecution(outCh, nil)
 
@@ -918,7 +918,7 @@ func TestOutboundPumpRejectsReadyMessagesAfterCancellation(t *testing.T) {
 		outCh := make(chan tsslib.Message, 1)
 		outCh <- newTestOutboundMessage("late")
 		ctx, cancel := context.WithCancel(context.Background())
-		rt := newSessionRuntime[protocolEvent](ctx, 1)
+		rt := newSessionRuntime(ctx, 1)
 		cancel()
 		sendCalls := 0
 		exec := newTestDKGExecution(outCh, nil)
@@ -941,7 +941,7 @@ func TestDKGResultChannelClosedWithoutResultFails(t *testing.T) {
 	outCh := make(chan tsslib.Message)
 	endCh := make(chan ecdsakeygen.LocalPartySaveData)
 	close(endCh)
-	rt := newSessionRuntime[protocolEvent](context.Background(), 1)
+	rt := newSessionRuntime(context.Background(), 1)
 	defer rt.Stop()
 	exec := newTestDKGExecution(outCh, endCh)
 
@@ -1171,7 +1171,7 @@ func TestSignProtocolDoneWaitsGraceBeforeEmitting(t *testing.T) {
 		Metrics:        testMetrics{},
 	})
 
-	rt := newSessionRuntime[protocolEvent](context.Background(), 4)
+	rt := newSessionRuntime(context.Background(), 4)
 	defer rt.Stop()
 
 	errCh := make(chan error, 1)
@@ -1218,7 +1218,7 @@ func TestSignResultChannelClosedWithoutResultFails(t *testing.T) {
 		Metrics:        testMetrics{},
 	})
 
-	rt := newSessionRuntime[protocolEvent](context.Background(), 4)
+	rt := newSessionRuntime(context.Background(), 4)
 	defer rt.Stop()
 
 	err := exec.runProtocolResultWorker(rt)

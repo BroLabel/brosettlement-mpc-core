@@ -1216,49 +1216,136 @@ func TestRecvLoopCanceled(t *testing.T) {
 	}
 }
 
-func TestSignProtocolDoneWaitsGraceBeforeEmitting(t *testing.T) {
-	endCh := make(chan common.SignatureData, 1)
+func TestSignCompletionWaitsForOutboundDelivery(t *testing.T) {
+	sendErr := errors.New("final SIGN send failed")
+	for _, tc := range []struct {
+		name    string
+		wantErr error
+	}{
+		{name: "delayed_delivery"},
+		{name: "final_send_error", wantErr: sendErr},
+		{name: "cancellation", wantErr: context.Canceled},
+		{name: "deadline", wantErr: context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			timeout := 2 * time.Second
+			if tc.wantErr == context.DeadlineExceeded {
+				timeout = 500 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			startReleased := make(chan struct{})
+			close(startReleased)
+			outCh := make(chan tsslib.Message, 2)
+			for _, payload := range []string{"first", "final"} {
+				msg := newTestOutboundMessage(payload).(testOutboundMessage)
+				msg.messageType = "binance.tsslib.ecdsa.signing.SignRound9Message"
+				outCh <- msg
+			}
+			endCh := make(chan common.SignatureData, 1)
+			exec := New(Params{
+				SessionID: "sign-drain", LocalPartyID: "A", Stage: "sign", Algorithm: "ecdsa",
+				Party: &gatedStartParty{entered: make(chan struct{}), release: startReleased},
+				OutCh: outCh, SignECDSAEndCh: endCh,
+				Logger: slog.Default(), Config: tssbnbutils.DefaultRunnerConfig(), Metrics: testMetrics{},
+			})
+			sendEntered := make(chan struct{})
+			releaseSend := make(chan struct{})
+			var delivered []string
+			transport := testTransport{
+				send: func(ctx context.Context, frame protocol.Frame) error {
+					if string(frame.Payload) == "first" {
+						close(sendEntered)
+						select {
+						case <-releaseSend:
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					} else if tc.wantErr == sendErr {
+						return sendErr
+					}
+					delivered = append(delivered, string(frame.Payload))
+					return nil
+				},
+				recv: func(ctx context.Context) (protocol.Frame, error) {
+					<-ctx.Done()
+					return protocol.Frame{}, ctx.Err()
+				},
+			}
+			errCh := make(chan error, 1)
+			joined := make(chan struct{})
+			go func() {
+				defer close(joined)
+				errCh <- exec.Run(ctx, transport)
+			}()
+			t.Cleanup(func() { cancel(); <-joined })
+			waitForSignal(t, sendEntered, "SIGN send entry")
+			endCh <- common.SignatureData{Signature: []byte("sig")}
+			select {
+			case err := <-errCh:
+				t.Fatalf("Run returned before outbound delivery: %v", err)
+			case <-time.After(200 * time.Millisecond):
+			}
+			if tc.wantErr == context.Canceled {
+				cancel()
+			} else if tc.wantErr != context.DeadlineExceeded {
+				close(releaseSend)
+			}
+			if err := waitForPumpResult(t, errCh); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Run error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				if exec.Signature() != nil {
+					t.Fatal("signature accepted without successful outbound delivery")
+				}
+				return
+			}
+			if !reflect.DeepEqual(delivered, []string{"first", "final"}) {
+				t.Fatalf("delivered = %v, want both queued frames in order", delivered)
+			}
+			if exec.Signature() == nil || string(exec.Signature().Signature) != "sig" {
+				t.Fatal("signature missing after successful outbound delivery")
+			}
+		})
+	}
+}
+
+func TestSignOutboundClosedWaitsForResult(t *testing.T) {
+	outCh := make(chan tsslib.Message)
+	close(outCh)
 	exec := New(Params{
-		SessionID:      "s1",
-		LocalPartyID:   "co-signer",
-		Stage:          "sign",
-		SignECDSAEndCh: endCh,
-		Config:         tssbnbutils.DefaultRunnerConfig(),
-		Metrics:        testMetrics{},
+		OutCh: outCh, SignECDSAEndCh: make(chan common.SignatureData),
+		Config: tssbnbutils.DefaultRunnerConfig(), Metrics: testMetrics{},
 	})
-
-	rt := newSessionRuntime(context.Background(), 4)
-	defer rt.Stop()
-
+	rt := newSessionRuntime(context.Background(), 1)
 	errCh := make(chan error, 1)
-	go func() { errCh <- exec.runProtocolResultWorker(rt) }()
-	endCh <- common.SignatureData{Signature: []byte("sig")}
-
-	select {
-	case <-rt.Events:
-		t.Fatal("protocol done emitted before sign grace elapsed")
-	case <-time.After(signProtocolDoneGrace / 2):
-	}
-
-	select {
-	case ev := <-rt.Events:
-		if ev.typ != eventProtocolDone {
-			t.Fatalf("event = %v, want eventProtocolDone", ev.typ)
-		}
-		if ev.result.signature == nil || string(ev.result.signature.GetSignature()) != "sig" {
-			t.Fatalf("signature result = %+v, want signature bytes preserved", ev.result.signature)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting protocol done")
-	}
-
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		errCh <- exec.runOutboundPump(rt, testTransport{})
+	}()
+	t.Cleanup(func() { rt.Stop(); <-joined })
 	select {
 	case err := <-errCh:
-		if err != nil {
-			t.Fatalf("runProtocolResultWorker returned err: %v", err)
-		}
+		t.Fatalf("outbound pump exited before the SIGN result: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	sig := &common.SignatureData{Signature: []byte("sig")}
+	select {
+	case rt.signResult <- sig:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting protocol result worker return")
+		t.Fatal("SIGN result handoff blocked")
+	}
+	if err := waitForPumpResult(t, errCh); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-rt.Events:
+		if ev.typ != eventProtocolDone || ev.result.signature != sig {
+			t.Fatalf("unexpected protocol event: %+v", ev)
+		}
+	default:
+		t.Fatal("missing SIGN completion event")
 	}
 }
 

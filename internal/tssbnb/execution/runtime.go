@@ -4,15 +4,17 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/bnb-chain/tss-lib/common"
 	"golang.org/x/sync/errgroup"
 )
 
 type sessionRuntime struct {
-	Ctx      context.Context
-	cancel   context.CancelFunc
-	Group    *errgroup.Group
-	Events   chan protocolEvent
-	stopping atomic.Bool
+	Ctx        context.Context
+	cancel     context.CancelFunc
+	Group      *errgroup.Group
+	Events     chan protocolEvent
+	signResult chan *common.SignatureData
+	stopping   atomic.Bool
 
 	workersDone chan struct{}
 	workerErr   error
@@ -30,6 +32,7 @@ func newSessionRuntime(parent context.Context, eventBuf int) *sessionRuntime {
 		cancel:      cancel,
 		Group:       g,
 		Events:      make(chan protocolEvent, eventBuf),
+		signResult:  make(chan *common.SignatureData),
 		workersDone: make(chan struct{}),
 	}
 }

@@ -13,7 +13,6 @@ import (
 
 	"github.com/BroLabel/brosettlement-mpc-core/internal/idgen"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
 
@@ -33,6 +32,7 @@ func (t *cancellationProvenanceTransport) SendFrame(ctx context.Context, frame p
 
 func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime, transport Transport) error {
 	ctx := rt.Ctx
+	outCh := e.outCh
 	for {
 		if ctx.Err() != nil {
 			return rt.StopError()
@@ -40,20 +40,27 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime, transport Transp
 		select {
 		case <-ctx.Done():
 			return rt.StopError()
-		// tss-lib outCh Round3 -> endCh result -> drain -> eventProtocolDone
+		// tss-lib enqueues the final frame before publishing the result.
+		case sig := <-rt.signResult:
+			return e.drainOutbound(rt, transport, protocolResult{signature: sig})
 		case data, ok := <-e.dkgECDSAEndCh:
 			if !ok {
 				return io.ErrUnexpectedEOF
 			}
-			return e.drainDKGOutbound(rt, transport, data)
-		case msg, ok := <-e.outCh:
+			return e.drainOutbound(rt, transport, protocolResult{ecdsaKeyShare: &data})
+		case msg, ok := <-outCh:
 			if !ok {
+				if e.signECDSAEndCh != nil {
+					// Keep the result handoff alive after the final outbound frame.
+					outCh = nil
+					continue
+				}
 				select {
 				case <-ctx.Done():
 					return rt.StopError()
 				case data, endOK := <-e.dkgECDSAEndCh:
 					if endOK {
-						return e.emitDKGDone(rt, data)
+						return e.emitProtocolDone(rt, protocolResult{ecdsaKeyShare: &data})
 					}
 					return io.ErrUnexpectedEOF
 				default:
@@ -67,8 +74,8 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime, transport Transp
 	}
 }
 
-// drainDKGOutbound sends already-produced frames before publishing the result.
-func (e *ProtocolExecution) drainDKGOutbound(rt *sessionRuntime, transport Transport, data ecdsakeygen.LocalPartySaveData) error {
+// drainOutbound sends already-produced frames before publishing the result.
+func (e *ProtocolExecution) drainOutbound(rt *sessionRuntime, transport Transport, result protocolResult) error {
 	for {
 		if rt.Ctx.Err() != nil {
 			return rt.StopError()
@@ -78,22 +85,22 @@ func (e *ProtocolExecution) drainDKGOutbound(rt *sessionRuntime, transport Trans
 			return rt.StopError()
 		case msg, ok := <-e.outCh:
 			if !ok {
-				return e.emitDKGDone(rt, data)
+				return e.emitProtocolDone(rt, result)
 			}
 			if err := e.forwardProtocolMessage(rt, transport, msg); err != nil {
 				return err
 			}
 		default:
-			return e.emitDKGDone(rt, data)
+			return e.emitProtocolDone(rt, result)
 		}
 	}
 }
 
-func (e *ProtocolExecution) emitDKGDone(rt *sessionRuntime, data ecdsakeygen.LocalPartySaveData) error {
+func (e *ProtocolExecution) emitProtocolDone(rt *sessionRuntime, result protocolResult) error {
 	if rt.Ctx.Err() != nil {
 		return rt.StopError()
 	}
-	if rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{ecdsaKeyShare: &data}}) {
+	if rt.Emit(protocolEvent{typ: eventProtocolDone, result: result}) {
 		return nil
 	}
 	return rt.StopError()

@@ -6,17 +6,11 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"time"
 
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
 )
-
-// tss-lib may publish the sign terminal result before this runner observes the
-// final outbound sign message. Delay terminal signaling briefly so the outbound
-// pump can flush already-produced frames without changing DKG completion.
-const signProtocolDoneGrace = 100 * time.Millisecond
 
 type protocolResult struct {
 	ecdsaKeyShare *ecdsakeygen.LocalPartySaveData
@@ -54,11 +48,13 @@ func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime) error {
 			return io.ErrUnexpectedEOF
 		}
 		sig := cloneSignatureDataValue(value)
-		if !e.waitSignProtocolDoneGrace(rt.Ctx) {
+		// The outbound owner drains queued frames before publishing success.
+		select {
+		case rt.signResult <- sig:
+			return nil
+		case <-rt.Ctx.Done():
 			return nil
 		}
-		rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{signature: sig}})
-		return nil
 	case 2, 3:
 		if !ok {
 			return io.ErrUnexpectedEOF
@@ -84,18 +80,6 @@ func cloneSignatureDataValue(value reflect.Value) *common.SignatureData {
 		R:                 fieldBytes("R"),
 		S:                 fieldBytes("S"),
 		M:                 fieldBytes("M"),
-	}
-}
-
-func (e *ProtocolExecution) waitSignProtocolDoneGrace(ctx context.Context) bool {
-	timer := time.NewTimer(signProtocolDoneGrace)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
 	}
 }
 

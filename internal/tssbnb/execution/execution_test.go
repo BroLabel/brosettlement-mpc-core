@@ -18,6 +18,7 @@ import (
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 	"github.com/bnb-chain/tss-lib/common"
 	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	ecdsasigning "github.com/bnb-chain/tss-lib/ecdsa/signing"
 	tsslib "github.com/bnb-chain/tss-lib/tss"
 )
 
@@ -950,6 +951,61 @@ func TestDKGResultChannelClosedWithoutResultFails(t *testing.T) {
 	}})
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("runOutboundPump error = %v, want io.ErrUnexpectedEOF", err)
+	}
+}
+
+type countingUpdateParty struct {
+	tsslib.Party
+	updates int
+}
+
+func (p *countingUpdateParty) Update(tsslib.ParsedMessage) (bool, *tsslib.Error) {
+	p.updates++
+	return true, nil
+}
+
+func TestHandleIncomingDoesNotApplyDuplicateFrame(t *testing.T) {
+	sender := tsslib.NewPartyID("p1", "p1", big.NewInt(1))
+	payload, _, err := ecdsasigning.NewSignRound3Message(sender, big.NewInt(42)).WireBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	party := &countingUpdateParty{}
+	exec := New(Params{
+		SessionID:             "s1",
+		Stage:                 "sign",
+		DerivationContextHash: strings.Repeat("a", 64),
+		Party:                 party,
+		PartyIDs:              map[string]*tsslib.PartyID{"p1": sender},
+		Config:                tssbnbutils.DefaultRunnerConfig(),
+		Metrics:               testMetrics{},
+	})
+	frame := protocol.Frame{
+		SessionID:             "s1",
+		Stage:                 "sign",
+		FromParty:             "p1",
+		Seq:                   7,
+		Broadcast:             true,
+		Payload:               payload,
+		DerivationContextHash: strings.Repeat("a", 64),
+	}
+	for i := 0; i < 2; i++ {
+		if err := exec.handleIncoming(frame); err != nil {
+			t.Fatalf("delivery %d: %v", i+1, err)
+		}
+	}
+	if party.updates != 1 {
+		t.Fatalf("duplicate frame applied to TSS: updates = %d, want 1", party.updates)
+	}
+	if got := exec.Stats().DedupDrops; got != 1 {
+		t.Fatalf("dedup drops = %d, want 1", got)
+	}
+	frame.Seq++
+	if err := exec.handleIncoming(frame); err != nil {
+		t.Fatal(err)
+	}
+	if party.updates != 2 {
+		t.Fatalf("new frame not applied to TSS: updates = %d, want 2", party.updates)
 	}
 }
 

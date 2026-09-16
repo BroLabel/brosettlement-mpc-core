@@ -108,9 +108,6 @@ func (e *ProtocolExecution) validateInbound(frame protocol.Frame) error {
 		return err
 	}
 	if ok, err := e.shouldProcessInbound(frame); !ok {
-		if errors.Is(err, ErrDuplicateFrame) {
-			return nil
-		}
 		return err
 	}
 	return nil

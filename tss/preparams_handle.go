@@ -3,10 +3,11 @@ package tss
 import "github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
 
 var (
-	ErrInvalidPreParamsHandle = preparams.ErrInvalidPreParamsHandle
-	ErrForeignPreParamsHandle = preparams.ErrForeignPreParamsHandle
-	ErrPreParamsConsumed      = preparams.ErrPreParamsConsumed
-	ErrPreParamsDiscarded     = preparams.ErrPreParamsDiscarded
+	ErrDKGPreParamsUnavailable = preparams.ErrPoolEmpty
+	ErrInvalidPreParamsHandle  = preparams.ErrInvalidPreParamsHandle
+	ErrForeignPreParamsHandle  = preparams.ErrForeignPreParamsHandle
+	ErrPreParamsConsumed       = preparams.ErrPreParamsConsumed
+	ErrPreParamsDiscarded      = preparams.ErrPreParamsDiscarded
 )
 
 // DKGPreParamsHandle is an opaque, service-bound, single-use DKG resource.

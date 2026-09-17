@@ -18,6 +18,7 @@ import (
 )
 
 var ErrPoolClosed = errors.New("preparams pool is closed")
+var ErrPoolEmpty = errors.New("preparams pool is empty")
 
 type Generator func(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 type Validator func(params *ecdsakeygen.LocalPreParams) bool
@@ -216,20 +217,47 @@ func (p *Pool) Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 		if p.cfg.AutoRefillOnAcquire {
 			defer p.signalRefill()
 		}
-		if !p.validate(it.params) {
-			return p.failAcquire(ErrInvalidCachedPreParams)
-		}
-		if p.cfg.FileCacheEnabled && it.cachePath == "" {
-			return p.failAcquire(ErrCachePathRequired)
-		}
-		if it.cachePath != "" {
-			if err := durablyRemoveCacheFile(p.fs, p.cfg.FileCacheDir, it.cachePath); err != nil {
-				return p.failAcquire(err)
-			}
-		}
-		p.acquires.Add(1)
-		return it.params, nil
+		return p.finishItem(it)
 	}
+}
+
+func (p *Pool) TryAcquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error) {
+	if err := ctx.Err(); err != nil {
+		return p.failAcquire(err)
+	}
+	if p.closed.Load() {
+		return p.failAcquire(ErrPoolClosed)
+	}
+	if !p.cfg.Enabled {
+		return p.finishSynchronousAcquire(p.syncGenerate(ctx))
+	}
+	select {
+	case it := <-p.ch:
+		if p.cfg.AutoRefillOnAcquire {
+			defer p.signalRefill()
+		}
+		return p.finishItem(it)
+	default:
+		p.poolEmpty.Add(1)
+		p.signalRefill()
+		return p.failAcquire(ErrPoolEmpty)
+	}
+}
+
+func (p *Pool) finishItem(it item) (*ecdsakeygen.LocalPreParams, error) {
+	if !p.validate(it.params) {
+		return p.failAcquire(ErrInvalidCachedPreParams)
+	}
+	if p.cfg.FileCacheEnabled && it.cachePath == "" {
+		return p.failAcquire(ErrCachePathRequired)
+	}
+	if it.cachePath != "" {
+		if err := durablyRemoveCacheFile(p.fs, p.cfg.FileCacheDir, it.cachePath); err != nil {
+			return p.failAcquire(err)
+		}
+	}
+	p.acquires.Add(1)
+	return it.params, nil
 }
 
 func (p *Pool) finishSynchronousAcquire(params *ecdsakeygen.LocalPreParams, err error) (*ecdsakeygen.LocalPreParams, error) {

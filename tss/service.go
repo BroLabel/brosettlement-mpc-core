@@ -228,6 +228,14 @@ func (s *Service) AcquireDKGPreParams(ctx context.Context) (DKGPreParamsHandle, 
 	return &dkgPreParamsHandle{handle: handle}, nil
 }
 
+func (s *Service) TryAcquireDKGPreParams(ctx context.Context) (DKGPreParamsHandle, error) {
+	handle, err := s.impl.TryAcquireDKGPreParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &dkgPreParamsHandle{handle: handle}, nil
+}
+
 // RunDKGSessionWithPreParams has the same completion barrier as RunDKGSession.
 func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, req DKGSessionRequest, handle DKGPreParamsHandle) (DKGOutput, error) {
 	if err := req.Validate(); err != nil {

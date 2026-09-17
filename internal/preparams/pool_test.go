@@ -64,6 +64,64 @@ func TestPoolAcquireSuccess(t *testing.T) {
 	}
 }
 
+func TestPoolTryAcquireReturnsImmediatelyWhenEmpty(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 1
+	pool := newPoolForTest(testLogger(), cfg, nil, func(params *ecdsakeygen.LocalPreParams) bool { return params != nil })
+
+	started := time.Now()
+	_, err := pool.TryAcquire(context.Background())
+	if !errors.Is(err, ErrPoolEmpty) {
+		t.Fatalf("TryAcquire() error = %v, want ErrPoolEmpty", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("TryAcquire() blocked for %s", elapsed)
+	}
+}
+
+func TestPoolTryAcquirePreservesDisabledPoolSynchronousGeneration(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Enabled = false
+	pool := newPoolForTest(
+		testLogger(),
+		cfg,
+		func(context.Context) (*ecdsakeygen.LocalPreParams, error) { return &ecdsakeygen.LocalPreParams{}, nil },
+		func(params *ecdsakeygen.LocalPreParams) bool { return params != nil },
+	)
+
+	got, err := pool.TryAcquire(context.Background())
+	if err != nil || got == nil {
+		t.Fatalf("TryAcquire() = (%v, %v), want generated pre-params", got, err)
+	}
+}
+
+func TestPoolTryAcquireDoesNotConsumeWhenContextIsCanceled(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TargetSize = 1
+	cfg.MaxConcurrency = 1
+	pool := newPoolForTest(
+		testLogger(),
+		cfg,
+		func(context.Context) (*ecdsakeygen.LocalPreParams, error) { return &ecdsakeygen.LocalPreParams{}, nil },
+		func(params *ecdsakeygen.LocalPreParams) bool { return params != nil },
+	)
+	defer func() { _ = pool.Close() }()
+	if err := pool.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitFor(t, 500*time.Millisecond, func() bool { return pool.Size() == 1 })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := pool.TryAcquire(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("TryAcquire() error = %v, want context.Canceled", err)
+	}
+	if got := pool.Size(); got != 1 {
+		t.Fatalf("pool size after canceled acquire = %d, want 1", got)
+	}
+}
+
 func TestPoolWaitOnEmpty(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.TargetSize = 1

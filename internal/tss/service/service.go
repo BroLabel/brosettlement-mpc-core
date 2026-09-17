@@ -115,6 +115,28 @@ func (s *Service) AcquireDKGPreParams(ctx context.Context) (*preparams.Handle, e
 	return handle, nil
 }
 
+func (s *Service) TryAcquireDKGPreParams(ctx context.Context) (*preparams.Handle, error) {
+	source := ResolvePreParamsSource(s.preParamsSource, s.preParamsPool)
+	if source == nil {
+		return nil, errors.New("dkg preparams source is unavailable")
+	}
+	var material *ecdsakeygen.LocalPreParams
+	var err error
+	if trySource, ok := source.(TryPreParamsPool); ok {
+		material, err = trySource.TryAcquire(ctx)
+	} else {
+		material, err = source.Acquire(ctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	handle := preparams.NewHandle(s.preParamsBinding, material)
+	if handle == nil {
+		return nil, preparams.ErrInvalidPreParamsHandle
+	}
+	return handle, nil
+}
+
 func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, in DKGInput, handle *preparams.Handle) (DKGOutput, error) {
 	material, err := preparams.Consume(s.preParamsBinding, handle)
 	if err != nil {

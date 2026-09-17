@@ -11,11 +11,23 @@ func TestDefaultRunnerConfigWatchdogThresholds(t *testing.T) {
 	if cfg.StallWarn != 30*time.Second {
 		t.Errorf("StallWarn = %s, want %s", cfg.StallWarn, 30*time.Second)
 	}
-	if cfg.StallFail != 45*time.Second {
-		t.Errorf("StallFail = %s, want %s", cfg.StallFail, 45*time.Second)
+	if cfg.StallFail != 120*time.Second {
+		t.Errorf("StallFail = %s, want %s", cfg.StallFail, 120*time.Second)
 	}
 	if cfg.StallWarnEvery != 30*time.Second {
 		t.Errorf("StallWarnEvery = %s, want %s", cfg.StallWarnEvery, 30*time.Second)
+	}
+}
+
+func TestRunnerConfigFromEnvWatchdogFallback(t *testing.T) {
+	for _, value := range []string{"", "invalid", "0s", "-1s"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("TSS_STALL_WARN", "30s")
+			t.Setenv("TSS_STALL_FAIL", value)
+			if got := LoadRunnerConfigFromEnv().StallFail; got != 120*time.Second {
+				t.Fatalf("StallFail = %s, want 2m", got)
+			}
+		})
 	}
 }
 

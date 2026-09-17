@@ -52,6 +52,16 @@ Only `tss`, `protocol`, and `transport` are public packages. Everything under
 
 ## Install
 
+### Protocol progress watchdog
+
+The default runner warns after 30 seconds without protocol progress and fails
+after 120 seconds (`TSS_STALL_WARN` and `TSS_STALL_FAIL`). These defaults apply
+to both DKG and SIGN. Explicit environment overrides take precedence. Increasing
+the idle threshold tolerates slower rounds under CPU pressure, but does not
+extend the caller's session deadline or replace admission capacity limits.
+Applications pinned to an older Core version must update and rebuild to receive
+the new default.
+
 BroSettlement MPC Core requires Go 1.24 or newer.
 
 ```bash

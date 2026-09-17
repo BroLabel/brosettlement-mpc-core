@@ -194,6 +194,13 @@ Core performs DKG, persists opaque local key material through caller-provided
 capabilities, derives non-hardened ECDSA child keys, binds signing peers to the
 same derivation context, and returns the local protocol result.
 
+`RunDKGSession`, `RunDKGSessionWithPreParams`, and `RunSignSession` are
+completion barriers. On success, failure, or context cancellation, they return
+only after session-owned protocol workers, transport pumps, result bridges, and
+result callbacks have stopped. Callers can release session capacity after the
+method returns without allowing a late frame or signature callback from that
+session.
+
 The embedding orchestration layer remains responsible for:
 
 - generating and distributing one chain code per ECDSA DKG intent;

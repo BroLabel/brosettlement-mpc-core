@@ -87,3 +87,16 @@ func TestServiceSnapshotSurfacesHandleMetricsWithoutInternalPool(t *testing.T) {
 		t.Fatalf("Snapshot() = %+v, want %+v", got, want)
 	}
 }
+
+func TestTryAcquireDKGPreParamsPreservesExternalSource(t *testing.T) {
+	source := &stubPreParamsSource{preParams: &ecdsakeygen.LocalPreParams{}}
+	svc := New(newECDSASecp256k1StubRunner(t, "session-1"), newTestLogger(), nil, nil, nil, source)
+
+	handle, err := svc.TryAcquireDKGPreParams(context.Background())
+	if err != nil || handle == nil {
+		t.Fatalf("TryAcquireDKGPreParams() = (%v, %v), want external handle", handle, err)
+	}
+	if source.acquires != 1 {
+		t.Fatalf("external source acquires = %d, want 1", source.acquires)
+	}
+}

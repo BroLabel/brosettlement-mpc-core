@@ -15,6 +15,10 @@ type PreParamsPool interface {
 	Acquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
 }
 
+type TryPreParamsPool interface {
+	TryAcquire(ctx context.Context) (*ecdsakeygen.LocalPreParams, error)
+}
+
 type RefillController interface {
 	PauseRefill()
 	ResumeRefill()

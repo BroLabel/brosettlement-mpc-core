@@ -27,7 +27,7 @@ type DKGBuildInput struct {
 type DKGBuildOutput struct {
 	Party    tsslib.Party
 	ECDSAEnd <-chan ecdsakeygen.LocalPartySaveData
-	Done     <-chan struct{}
+	EdDSAEnd <-chan eddsakeygen.LocalPartySaveData
 }
 
 type DKGRunJob struct {
@@ -62,11 +62,9 @@ func BuildDKG(in DKGBuildInput) (DKGBuildOutput, error) {
 		}, nil
 	}
 	if alg == "eddsa" {
-		doneCh := make(chan struct{}, 1)
 		endCh := make(chan eddsakeygen.LocalPartySaveData, 1)
 		party := eddsakeygen.NewLocalParty(in.Params, in.OutCh, endCh)
-		go waitDKGDoneEdDSA(endCh, doneCh)
-		return DKGBuildOutput{Party: party, Done: doneCh}, nil
+		return DKGBuildOutput{Party: party, EdDSAEnd: endCh}, nil
 	}
 	return DKGBuildOutput{}, fmt.Errorf("unsupported algorithm: %s", in.Algorithm)
 }
@@ -81,14 +79,6 @@ func newECDSAKeygenParty(
 		return ecdsakeygen.NewLocalParty(params, outCh, endCh)
 	}
 	return ecdsakeygen.NewLocalParty(params, outCh, endCh, *preParams)
-}
-
-func waitDKGDoneEdDSA(endCh <-chan eddsakeygen.LocalPartySaveData, doneCh chan<- struct{}) {
-	<-endCh
-	select {
-	case doneCh <- struct{}{}:
-	default:
-	}
 }
 
 func RunDKG(ctx context.Context, in DKGRunInput) error {
@@ -190,7 +180,7 @@ func newDKGExecution(job DKGRunJob, logger *slog.Logger, debug bool, correlation
 		Config:        cfg,
 		Metrics:       metrics,
 		DKGECDSAEndCh: built.ECDSAEnd,
-		DoneCh:        built.Done,
+		DKGEdDSAEndCh: built.EdDSAEnd,
 	}), params.Threshold(), nil
 }
 

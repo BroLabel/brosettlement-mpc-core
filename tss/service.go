@@ -211,6 +211,8 @@ func (s *Service) Snapshot() Snapshot {
 	return s.impl.Snapshot()
 }
 
+// RunDKGSession returns only after all session-owned protocol, transport, result,
+// and callback work has stopped, including on failure or context cancellation.
 func (s *Service) RunDKGSession(ctx context.Context, req DKGSessionRequest) (DKGOutput, error) {
 	if err := req.Validate(); err != nil {
 		return DKGOutput{}, err
@@ -226,6 +228,15 @@ func (s *Service) AcquireDKGPreParams(ctx context.Context) (DKGPreParamsHandle, 
 	return &dkgPreParamsHandle{handle: handle}, nil
 }
 
+func (s *Service) TryAcquireDKGPreParams(ctx context.Context) (DKGPreParamsHandle, error) {
+	handle, err := s.impl.TryAcquireDKGPreParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &dkgPreParamsHandle{handle: handle}, nil
+}
+
+// RunDKGSessionWithPreParams has the same completion barrier as RunDKGSession.
 func (s *Service) RunDKGSessionWithPreParams(ctx context.Context, req DKGSessionRequest, handle DKGPreParamsHandle) (DKGOutput, error) {
 	if err := req.Validate(); err != nil {
 		return DKGOutput{}, err
@@ -263,6 +274,9 @@ func buildDKGInput(req DKGSessionRequest) tssservice.DKGInput {
 	}
 }
 
+// RunSignSession returns only after all session-owned protocol, transport,
+// result, and signature callback work has stopped, including on failure or
+// context cancellation.
 func (s *Service) RunSignSession(ctx context.Context, req SignSessionRequest) error {
 	if err := req.Validate(); err != nil {
 		return err

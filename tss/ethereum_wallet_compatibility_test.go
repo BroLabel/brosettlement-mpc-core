@@ -204,7 +204,7 @@ func ethereumWalletV1Context(vector ethereumWalletV1FixtureVector) DerivationCon
 	}
 }
 
-func signEthereumWalletV1Digest(t *testing.T, fixture mpc2Of3Fixture, chain string, digest []byte, derivationContext DerivationContext) common.SignatureData {
+func signEthereumWalletV1Digest(t *testing.T, fixture mpc2Of3Fixture, chain string, digest []byte, derivationContext DerivationContext) *common.SignatureData {
 	t.Helper()
 	parties := []string{mpc2Of3PartyA, mpc2Of3PartyB}
 	sessionID := "ethereum-wallet-v1-sign"
@@ -228,10 +228,10 @@ func signEthereumWalletV1Digest(t *testing.T, fixture mpc2Of3Fixture, chain stri
 	if err != nil {
 		t.Fatalf("export signature: %v", err)
 	}
-	return signature
+	return &signature
 }
 
-func assertEthereumWalletV1Signature(t *testing.T, signature common.SignatureData, publicKeyHex string, digest []byte) {
+func assertEthereumWalletV1Signature(t *testing.T, signature *common.SignatureData, publicKeyHex string, digest []byte) {
 	t.Helper()
 	if len(signature.GetSignature()) != 64 || !bytes.Equal(signature.GetSignature(), append(append([]byte(nil), signature.GetR()...), signature.GetS()...)) {
 		t.Fatal("signature is not compact 64-byte R||S")

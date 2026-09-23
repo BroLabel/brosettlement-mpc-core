@@ -138,3 +138,41 @@ func validPublicECDSADerivationContext() DerivationContext {
 		FullPath:    "m/44'/60'/0'/0/15",
 	}
 }
+
+// Chain is an opaque caller binding, not a registry or a key-derivation input.
+func TestDerivationAcceptsOpaqueChainsAndBindsSessions(t *testing.T) {
+	first := validPublicECDSADerivationContext()
+	first.Chain = "application:network-a"
+	second := first
+	second.Chain = "application:future-network"
+	chainCode := bytes.Repeat([]byte{0x11}, 32)
+	var keys, hashes []string
+	for _, ctx := range []DerivationContext{first, second} {
+		key, err := DeriveECDSAChildPublicKey(validAccountPublicKeyHex, chainCode, ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hash, err := DerivationContextHashV1(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, key)
+		hashes = append(hashes, hash)
+		if err := validateDerivationContextForSession(ctx, SignSessionDescriptor{
+			Algorithm: AlgorithmECDSA, Curve: CurveSecp256k1, Chain: ctx.Chain,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if keys[0] != keys[1] {
+		t.Fatal("chain identity changed the derived key")
+	}
+	if hashes[0] == hashes[1] {
+		t.Fatal("different chain bindings have the same context hash")
+	}
+	if err := validateDerivationContextForSession(first, SignSessionDescriptor{
+		Algorithm: AlgorithmECDSA, Curve: CurveSecp256k1, Chain: second.Chain,
+	}); !errors.Is(err, ErrInvalidDerivationContext) {
+		t.Fatalf("mismatched chain: got %v, want ErrInvalidDerivationContext", err)
+	}
+}

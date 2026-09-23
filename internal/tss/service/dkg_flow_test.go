@@ -228,8 +228,7 @@ func TestDuplicateDKGServiceRejectsSamePartyUntilPersistenceCompletes(t *testing
 			ChainCode:        strings.Repeat("11", 32),
 			DerivationScheme: "bip32_secp256k1",
 		},
-		MissingPub:  errMissingPublicKey,
-		MissingAddr: errMissingAddress,
+		MissingPub: errMissingPublicKey,
 	}
 
 	firstResult := make(chan error, 1)
@@ -276,9 +275,8 @@ func TestConcurrentDKGServiceIsolatesPartyTransportAndCodecResults(t *testing.T)
 					ChainCode:        chainCode,
 					DerivationScheme: "bip32_secp256k1",
 				},
-				Transport:   transport,
-				MissingPub:  errMissingPublicKey,
-				MissingAddr: errMissingAddress,
+				Transport:  transport,
+				MissingPub: errMissingPublicKey,
 			})
 			resultCh <- result{output: output, err: err}
 		}()
@@ -387,7 +385,6 @@ func TestRunDKGSessionWithPreParamsConsumesBeforeRunnerAndBurnsOnError(t *testin
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	}, handle)
 	if !errors.Is(err, runErr) {
 		t.Fatalf("run error = %v, want runner error", err)
@@ -460,9 +457,8 @@ func TestRunDKGSessionWithPreParamsConsumesIndependentHandlesForBAndC(t *testing
 					ChainCode:        strings.Repeat("11", 32),
 					DerivationScheme: "bip32_secp256k1",
 				},
-				Transport:   &identifiedTransport{partyID: partyID},
-				MissingPub:  errMissingPublicKey,
-				MissingAddr: errMissingAddress,
+				Transport:  &identifiedTransport{partyID: partyID},
+				MissingPub: errMissingPublicKey,
 			}, handle)
 			resultCh <- result{output: output, err: err}
 		}()
@@ -506,12 +502,11 @@ func TestRunDKGSession_UsesExternalPreParamsSourceWhenProvided(t *testing.T) {
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
 	}
-	if output.KeyID != "session-1" || output.PublicKey == "" || output.Address == "" {
+	if output.KeyID != "session-1" || output.PublicKey == "" {
 		t.Fatalf("expected populated ecdsa output, got %+v", output)
 	}
 	if runner.lastDKGJob.ECDSAPreParams != externalSource.preParams {
@@ -543,12 +538,11 @@ func TestRunDKGSession_UsesInternalPoolWhenExternalPreParamsSourceMissing(t *tes
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
 	}
-	if out.KeyID != "session-2" || out.PublicKey == "" || out.Address == "" {
+	if out.KeyID != "session-2" || out.PublicKey == "" {
 		t.Fatalf("expected populated ecdsa output, got %+v", out)
 	}
 	if runner.lastDKGJob.ECDSAPreParams != internalPool.preParams {
@@ -575,7 +569,6 @@ func TestRunDKGSession_ReturnsMissingPublicKeyError(t *testing.T) {
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	})
 	if !errors.Is(err, errMissingPublicKey) {
 		t.Fatalf("expected missing public key error, got %v", err)
@@ -605,7 +598,6 @@ func TestRunDKGSession_ReturnsMissingPublicKeyForNonSecp256k1Share(t *testing.T)
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	})
 	if !errors.Is(err, errMissingPublicKey) {
 		t.Fatalf("expected missing public key error, got %v", err)
@@ -634,7 +626,6 @@ func TestRunDKGSession_PersistsShareAfterOutputExtraction(t *testing.T) {
 		Algorithm:                   "ecdsa",
 		DerivationMaterial:          validDKGMaterial(),
 		MissingPub:                  errMissingPublicKey,
-		MissingAddr:                 errMissingAddress,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
@@ -682,7 +673,6 @@ func TestRunDKGSessionCopiesOpaqueDescriptorFingerprintBeforeWriterCall(t *testi
 		Algorithm:                   "ecdsa",
 		DerivationMaterial:          validDKGMaterial(),
 		MissingPub:                  errMissingPublicKey,
-		MissingAddr:                 errMissingAddress,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
@@ -712,7 +702,6 @@ func TestRunDKGSession_PersistFailureKeepsRunnerShare(t *testing.T) {
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	})
 	if !errors.Is(err, errPersistFailed) {
 		t.Fatalf("expected persist failure, got %v", err)
@@ -744,7 +733,6 @@ func TestRunDKGSession_RequiresShareWriterBeforeRunnerStart(t *testing.T) {
 		Algorithm:          "ecdsa",
 		DerivationMaterial: validDKGMaterial(),
 		MissingPub:         errMissingPublicKey,
-		MissingAddr:        errMissingAddress,
 	})
 	if !errors.Is(err, ErrShareWriterRequired) {
 		t.Fatalf("RunDKGSession() error = %v, want ErrShareWriterRequired", err)
@@ -799,8 +787,7 @@ func TestRunDKGSession_ECDSAOutputIncludesSuppliedDerivationMaterial(t *testing.
 			ChainCode:        chainCode,
 			DerivationScheme: "bip32_secp256k1",
 		},
-		MissingPub:  errMissingPublicKey,
-		MissingAddr: errMissingAddress,
+		MissingPub: errMissingPublicKey,
 	})
 	if err != nil {
 		t.Fatalf("RunDKGSession returned error: %v", err)
@@ -834,9 +821,8 @@ func TestBuildECDSADKGOutput(t *testing.T) {
 
 	runner := newECDSASecp256k1StubRunner(t, "session-1")
 	out, share, err := buildECDSADKGOutput(runner, DKGInput{
-		SessionID:   "session-1",
-		MissingPub:  errMissingPublicKey,
-		MissingAddr: errMissingAddress,
+		SessionID:  "session-1",
+		MissingPub: errMissingPublicKey,
 	}, "key-1", normalizedDKGMaterial{
 		ChainCode:    []byte(strings.Repeat("\x11", 32)),
 		ChainCodeHex: strings.Repeat("11", 32),
@@ -845,7 +831,7 @@ func TestBuildECDSADKGOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildECDSADKGOutput returned error: %v", err)
 	}
-	if out.KeyID != "key-1" || out.PublicKey == "" || out.Address == "" {
+	if out.KeyID != "key-1" || out.PublicKey == "" {
 		t.Fatalf("expected populated output, got %+v", out)
 	}
 	if reflect.DeepEqual(share, ecdsakeygen.LocalPartySaveData{}) {

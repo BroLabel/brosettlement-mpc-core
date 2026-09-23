@@ -19,7 +19,6 @@ import (
 
 var (
 	errMissingPublicKey = errors.New("missing public key")
-	errMissingAddress   = errors.New("missing address")
 	errPersistFailed    = errors.New("persist failed")
 	errShareMissing     = errors.New("share missing")
 )

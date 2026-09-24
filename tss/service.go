@@ -93,7 +93,6 @@ var (
 	ErrKeyIDRequired            = errors.New("key id is required")
 	ErrDigestMissing            = errors.New("digest is required")
 	ErrMissingDKGPublicKey      = errors.New("dkg result missing public key")
-	ErrMissingDKGAddress        = errors.New("dkg result missing address")
 )
 
 func WithPreParamsConfig(cfg PreParamsConfig) ServiceOption {
@@ -270,7 +269,6 @@ func buildDKGInput(req DKGSessionRequest) tssservice.DKGInput {
 		Transport:                   req.Transport,
 		EmptyKeyErr:                 ErrKeyIDRequired,
 		MissingPub:                  ErrMissingDKGPublicKey,
-		MissingAddr:                 ErrMissingDKGAddress,
 	}
 }
 

@@ -57,14 +57,9 @@ func buildECDSADKGOutput(runner Runner, in DKGInput, keyID string, material norm
 		}
 		return DKGOutput{}, ecdsakeygen.LocalPartySaveData{}, in.MissingPub
 	}
-	derived, err := tssruntime.DeriveECDSAOutputFromShare(share, in.MissingPub, in.MissingAddr)
-	if err != nil {
-		return DKGOutput{}, ecdsakeygen.LocalPartySaveData{}, err
-	}
 	return DKGOutput{
 		KeyID:            keyID,
 		PublicKey:        publicKey,
-		Address:          derived.Address,
 		ChainCode:        material.ChainCodeHex,
 		PublicKeyFormat:  corederivation.PublicKeyFormatUncompressedHex,
 		DerivationScheme: corederivation.DerivationSchemeBIP32Secp256k1,

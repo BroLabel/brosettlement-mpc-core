@@ -61,13 +61,11 @@ type DKGInput struct {
 	Transport                   coretransport.FrameTransport
 	EmptyKeyErr                 error
 	MissingPub                  error
-	MissingAddr                 error
 }
 
 type DKGOutput struct {
 	KeyID            string
 	PublicKey        string
-	Address          string
 	ChainCode        string
 	PublicKeyFormat  string
 	DerivationScheme string

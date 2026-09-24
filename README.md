@@ -220,6 +220,27 @@ The embedding orchestration layer remains responsible for:
 - computing chain-specific child addresses; and
 - validating `ExpectedAddress` against chain-specific rules.
 
+### Chain-independent contract
+
+Core accepts an already computed digest and an opaque `Chain` binding. It does
+not register networks, encode addresses, parse transactions, or choose their
+hash algorithms. New networks using a supported curve and derivation scheme
+require changes only in the embedding applications. `Chain` still participates
+in the existing v1 context hash and session consistency checks; that wire
+contract is unchanged.
+
+DKG returns public-key and derivation material, without a network address.
+Consumers upgrading from v0.4.7 must stop using `DKGOutput.Address` and
+`ErrMissingDKGAddress`, which have been removed. Wallet address derivation
+belongs to the caller. Existing key-share formats and stored material do not
+change, and this update does not require another DKG ceremony.
+
+Core tests verify arbitrary chain bindings, child derivation, and real threshold
+signatures (compact R||S, low-S, recovery and independent verification). Network
+fixtures and transaction compatibility tests belong to Signer, Co-Signer and
+the backend integration suite. Historical chain names in canonical hash test
+vectors are opaque inputs and do not constitute a supported-network list.
+
 ### Reserved contracts
 
 EdDSA derivation constants are reserved in the public contract for future

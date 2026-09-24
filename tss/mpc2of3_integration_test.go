@@ -438,10 +438,6 @@ func assertMPC2Of3DKGEvidence(
 	if accountPublicKey == "" {
 		t.Fatal("DKG returned no account public key")
 	}
-	accountAddress := outputs[mpc2Of3PartyA].Address
-	if accountAddress == "" {
-		t.Fatal("DKG returned no account address")
-	}
 	var accountPublicKeyEvidence []byte
 	chainCodeHash := sha256.Sum256(mustDecodeMPC2Of3Hex(t, chainCodeHex))
 	for _, partyID := range parties {
@@ -451,9 +447,6 @@ func assertMPC2Of3DKGEvidence(
 		}
 		if output.PublicKey != accountPublicKey {
 			t.Fatal("DKG parties returned different account public keys")
-		}
-		if output.Address != accountAddress {
-			t.Fatal("DKG parties returned different account addresses")
 		}
 		if output.ChainCode != chainCodeHex {
 			t.Fatal("DKG party returned a different chain code")
@@ -531,7 +524,7 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 
 	derivationContext := DerivationContext{
 		ProfileID:       "mpc2of3-profile",
-		Chain:           "ethereum",
+		Chain:           "application:opaque-network",
 		Algorithm:       AlgorithmECDSA,
 		Curve:           CurveSecp256k1,
 		Scheme:          DerivationSchemeBIP32Secp256k1,
@@ -569,7 +562,7 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 					Threshold: 2,
 					Algorithm: AlgorithmECDSA,
 					Curve:     CurveSecp256k1,
-					Chain:     "ethereum",
+					Chain:     "application:opaque-network",
 				},
 				LocalPartyID:      partyID,
 				Digest:            digest,
@@ -604,8 +597,22 @@ func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publi
 	if err != nil {
 		t.Fatalf("parse derived public key with independent verifier: %v", err)
 	}
+	if len(signature.GetSignature()) != 64 || !bytes.Equal(signature.GetSignature(), append(append([]byte(nil), signature.GetR()...), signature.GetS()...)) {
+		t.Fatal("signature is not compact 64-byte R||S")
+	}
+	if len(signature.GetSignatureRecovery()) != 1 || signature.GetSignatureRecovery()[0] > 3 {
+		t.Fatal("signature has invalid recovery ID")
+	}
+	compact := append([]byte{27 + signature.GetSignatureRecovery()[0]}, signature.GetSignature()...)
+	recovered, _, err := btcec.RecoverCompact(btcec.S256(), compact, digest)
+	if err != nil || !bytes.Equal(recovered.SerializeUncompressed(), publicKey.SerializeUncompressed()) {
+		t.Fatalf("signature did not recover the derived public key: %v", err)
+	}
 	r := new(big.Int).SetBytes(signature.GetR())
 	s := new(big.Int).SetBytes(signature.GetS())
+	if s.Cmp(new(big.Int).Rsh(btcec.S256().Params().N, 1)) > 0 {
+		t.Fatal("signature is not low-S")
+	}
 	if r.Sign() <= 0 || s.Sign() <= 0 {
 		t.Fatal("signature is missing ECDSA components")
 	}

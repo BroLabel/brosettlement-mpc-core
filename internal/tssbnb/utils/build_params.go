@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func BuildParams(

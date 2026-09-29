@@ -13,7 +13,7 @@ import (
 
 	"github.com/BroLabel/brosettlement-mpc-core/internal/idgen"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 type cancellationProvenanceTransport struct {
@@ -44,10 +44,10 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime, transport Transp
 		case sig := <-rt.signResult:
 			return e.drainOutbound(rt, transport, protocolResult{signature: sig})
 		case data, ok := <-e.dkgECDSAEndCh:
-			if !ok {
+			if !ok || data == nil {
 				return io.ErrUnexpectedEOF
 			}
-			return e.drainOutbound(rt, transport, protocolResult{ecdsaKeyShare: &data})
+			return e.drainOutbound(rt, transport, protocolResult{ecdsaKeyShare: data})
 		case msg, ok := <-outCh:
 			if !ok {
 				if e.signECDSAEndCh != nil {
@@ -59,8 +59,8 @@ func (e *ProtocolExecution) runOutboundPump(rt *sessionRuntime, transport Transp
 				case <-ctx.Done():
 					return rt.StopError()
 				case data, endOK := <-e.dkgECDSAEndCh:
-					if endOK {
-						return e.emitProtocolDone(rt, protocolResult{ecdsaKeyShare: &data})
+					if endOK && data != nil {
+						return e.emitProtocolDone(rt, protocolResult{ecdsaKeyShare: data})
 					}
 					return io.ErrUnexpectedEOF
 				default:

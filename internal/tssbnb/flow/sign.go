@@ -14,10 +14,10 @@ import (
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	ecdsasigning "github.com/bnb-chain/tss-lib/ecdsa/signing"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	ecdsasigning "github.com/bnb-chain/tss-lib/v3/ecdsa/signing"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 var (
@@ -37,7 +37,7 @@ type SignBuildInput struct {
 
 type SignBuildOutput struct {
 	Party tsslib.Party
-	End   <-chan common.SignatureData
+	End   <-chan *common.SignatureData
 }
 
 type SignRunJob struct {
@@ -68,9 +68,9 @@ func BuildSign(in SignBuildInput) (SignBuildOutput, error) {
 	if in.KeyDerivationDelta == nil {
 		return SignBuildOutput{}, ErrKeyDerivationDeltaRequired
 	}
-	tssEndCh := make(chan common.SignatureData, 1)
+	tssEndCh := make(chan *common.SignatureData, 1)
 	msg := new(big.Int).SetBytes(in.Digest)
-	party := ecdsasigning.NewLocalPartyWithKDD(msg, in.Params, in.KeyShare, in.KeyDerivationDelta, in.OutCh, tssEndCh)
+	party := ecdsasigning.NewLocalPartyWithKDD(msg, in.Params, in.KeyShare, in.KeyDerivationDelta, in.OutCh, tssEndCh, len(in.Digest))
 	return SignBuildOutput{Party: party, End: tssEndCh}, nil
 }
 

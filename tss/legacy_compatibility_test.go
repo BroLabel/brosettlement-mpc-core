@@ -3,6 +3,7 @@ package tss
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
 // Frozen old-producer bytes catch accidental fixture edits and decoder/derivation
@@ -91,8 +92,8 @@ func TestLegacyV1FixtureManifest(t *testing.T) {
 			t.Fatal("legacy participant index changed")
 		}
 		root := material.Share.ECDSAPub.ToECDSAPubKey()
-		public := &btcec.PublicKey{Curve: btcec.S256(), X: root.X, Y: root.Y}
-		if hex.EncodeToString(public.SerializeUncompressed()) != manifest.RootPublicKey || !bytes.Equal(material.ChainCode, chainCode) {
+		public := elliptic.Marshal(btcec.S256(), root.X, root.Y)
+		if hex.EncodeToString(public) != manifest.RootPublicKey || !bytes.Equal(material.ChainCode, chainCode) {
 			t.Fatal("legacy account identity changed")
 		}
 		for _, child := range manifest.Children {
@@ -125,7 +126,7 @@ func TestLegacyV1FixtureManifest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		public, err := btcec.ParsePubKey(publicBytes, btcec.S256())
+		public, err := btcec.ParsePubKey(publicBytes)
 		if err != nil {
 			t.Fatal(err)
 		}

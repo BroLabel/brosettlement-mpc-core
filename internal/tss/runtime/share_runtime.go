@@ -5,7 +5,7 @@ import (
 
 	coreshares "github.com/BroLabel/brosettlement-mpc-core/internal/shares"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 type DKGPersistInput struct {

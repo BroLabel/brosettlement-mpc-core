@@ -12,9 +12,9 @@ import (
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	eddsakeygen "github.com/bnb-chain/tss-lib/eddsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	eddsakeygen "github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 type DKGBuildInput struct {
@@ -26,8 +26,8 @@ type DKGBuildInput struct {
 
 type DKGBuildOutput struct {
 	Party    tsslib.Party
-	ECDSAEnd <-chan ecdsakeygen.LocalPartySaveData
-	EdDSAEnd <-chan eddsakeygen.LocalPartySaveData
+	ECDSAEnd <-chan *ecdsakeygen.LocalPartySaveData
+	EdDSAEnd <-chan *eddsakeygen.LocalPartySaveData
 }
 
 type DKGRunJob struct {
@@ -55,14 +55,14 @@ type DKGRunInput struct {
 func BuildDKG(in DKGBuildInput) (DKGBuildOutput, error) {
 	alg := strings.ToLower(strings.TrimSpace(in.Algorithm))
 	if alg == "" || alg == "ecdsa" {
-		endCh := make(chan ecdsakeygen.LocalPartySaveData, 1)
+		endCh := make(chan *ecdsakeygen.LocalPartySaveData, 1)
 		return DKGBuildOutput{
 			Party:    newECDSAKeygenParty(in.Params, in.OutCh, endCh, in.PreParams),
 			ECDSAEnd: endCh,
 		}, nil
 	}
 	if alg == "eddsa" {
-		endCh := make(chan eddsakeygen.LocalPartySaveData, 1)
+		endCh := make(chan *eddsakeygen.LocalPartySaveData, 1)
 		party := eddsakeygen.NewLocalParty(in.Params, in.OutCh, endCh)
 		return DKGBuildOutput{Party: party, EdDSAEnd: endCh}, nil
 	}
@@ -72,7 +72,7 @@ func BuildDKG(in DKGBuildInput) (DKGBuildOutput, error) {
 func newECDSAKeygenParty(
 	params *tsslib.Parameters,
 	outCh chan<- tsslib.Message,
-	endCh chan<- ecdsakeygen.LocalPartySaveData,
+	endCh chan<- *ecdsakeygen.LocalPartySaveData,
 	preParams *ecdsakeygen.LocalPreParams,
 ) tsslib.Party {
 	if preParams == nil {

@@ -17,10 +17,10 @@ import (
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	"github.com/bnb-chain/tss-lib/common"
-	"github.com/bnb-chain/tss-lib/crypto"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	"github.com/bnb-chain/tss-lib/v3/crypto"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 type noopTransport struct{}

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	tsscrypto "github.com/bnb-chain/tss-lib/crypto"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsscrypto "github.com/bnb-chain/tss-lib/v3/crypto"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func ValidateUncompressedSecp256k1Hex(input string) error {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math/big"
 
-	tsscrypto "github.com/bnb-chain/tss-lib/crypto"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsscrypto "github.com/bnb-chain/tss-lib/v3/crypto"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 const compressedSecp256k1PublicKeyLength = 33

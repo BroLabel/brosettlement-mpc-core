@@ -8,8 +8,8 @@ import (
 	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 var (

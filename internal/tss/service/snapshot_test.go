@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/BroLabel/brosettlement-mpc-core/internal/preparams"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 type snapshotLifecyclePool struct {

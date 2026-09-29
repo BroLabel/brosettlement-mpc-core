@@ -11,7 +11,7 @@ import (
 
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 type testMetrics struct{}

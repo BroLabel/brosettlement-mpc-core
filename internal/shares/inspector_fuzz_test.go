@@ -5,9 +5,9 @@ import (
 	"math/big"
 	"testing"
 
-	tsscrypto "github.com/bnb-chain/tss-lib/crypto"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsscrypto "github.com/bnb-chain/tss-lib/v3/crypto"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func FuzzInspectEncodedECDSAKeyMaterial(f *testing.F) {

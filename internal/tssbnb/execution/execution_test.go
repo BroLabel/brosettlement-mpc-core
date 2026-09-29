@@ -16,10 +16,10 @@ import (
 
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	ecdsasigning "github.com/bnb-chain/tss-lib/ecdsa/signing"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	ecdsasigning "github.com/bnb-chain/tss-lib/v3/ecdsa/signing"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 type testMetrics struct{}
@@ -140,7 +140,7 @@ func newTestOutboundMessage(payload string) tsslib.Message {
 	}
 }
 
-func newTestDKGExecution(outCh <-chan tsslib.Message, endCh <-chan ecdsakeygen.LocalPartySaveData) *ProtocolExecution {
+func newTestDKGExecution(outCh <-chan tsslib.Message, endCh <-chan *ecdsakeygen.LocalPartySaveData) *ProtocolExecution {
 	return New(Params{
 		SessionID:     "session-1",
 		LocalPartyID:  "A",
@@ -218,7 +218,7 @@ func TestProtocolExecutionCancellationWaitsForPartyStart(t *testing.T) {
 		Algorithm:      "ecdsa",
 		Party:          party,
 		OutCh:          make(chan tsslib.Message),
-		SignECDSAEndCh: make(chan common.SignatureData),
+		SignECDSAEndCh: make(chan *common.SignatureData),
 		Logger:         slog.Default(),
 		Config:         tssbnbutils.DefaultRunnerConfig(),
 		Metrics:        testMetrics{},
@@ -267,7 +267,7 @@ func TestProtocolExecutionRecoveredFailureWaitsForPartyStart(t *testing.T) {
 		Algorithm:      "ecdsa",
 		Party:          party,
 		OutCh:          make(chan tsslib.Message),
-		SignECDSAEndCh: make(chan common.SignatureData),
+		SignECDSAEndCh: make(chan *common.SignatureData),
 		Logger:         slog.Default(),
 		Config:         tssbnbutils.DefaultRunnerConfig(),
 		Metrics:        panicRecvMetrics{},
@@ -322,7 +322,7 @@ func TestProtocolExecutionCancellationWaitsForRecvLoop(t *testing.T) {
 		Algorithm:      "ecdsa",
 		Party:          party,
 		OutCh:          make(chan tsslib.Message),
-		SignECDSAEndCh: make(chan common.SignatureData),
+		SignECDSAEndCh: make(chan *common.SignatureData),
 		Logger:         slog.Default(),
 		Config:         tssbnbutils.DefaultRunnerConfig(),
 		Metrics:        testMetrics{},
@@ -370,7 +370,7 @@ func TestProtocolExecutionRepeatedCancellationDoesNotLeakOrKeepSignature(t *test
 		releaseStart := make(chan struct{})
 		close(releaseStart)
 		party := &gatedStartParty{entered: make(chan struct{}), release: releaseStart}
-		endCh := make(chan common.SignatureData, 1)
+		endCh := make(chan *common.SignatureData, 1)
 		exec := New(Params{
 			SessionID:      fmt.Sprintf("cancel-race-%d", i),
 			LocalPartyID:   "A",
@@ -397,7 +397,7 @@ func TestProtocolExecutionRepeatedCancellationDoesNotLeakOrKeepSignature(t *test
 		case <-time.After(2 * time.Second):
 			t.Fatalf("iteration %d: timeout waiting for Party.Start entry", i)
 		}
-		endCh <- common.SignatureData{Signature: []byte("late")}
+		endCh <- &common.SignatureData{Signature: []byte("late")}
 		cancel()
 		select {
 		case err := <-runErrCh:
@@ -633,7 +633,7 @@ func TestTerminalSignCompletionPrefersWorkerFailure(t *testing.T) {
 		release: releaseStart,
 		err:     tsslib.NewError(startErr, "sign", 1, nil),
 	}
-	endCh := make(chan common.SignatureData, 1)
+	endCh := make(chan *common.SignatureData, 1)
 	exec := New(Params{
 		SessionID:      "sign-result-race",
 		LocalPartyID:   "A",
@@ -659,7 +659,7 @@ func TestTerminalSignCompletionPrefersWorkerFailure(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for Party.Start entry")
 	}
-	endCh <- common.SignatureData{Signature: []byte("candidate")}
+	endCh <- &common.SignatureData{Signature: []byte("candidate")}
 	deadline := time.After(2 * time.Second)
 	for !exec.protocolDoneFlag.Load() {
 		select {
@@ -688,13 +688,13 @@ func TestTerminalSignCompletionPrefersWorkerFailure(t *testing.T) {
 func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 	t.Run("blocked_final_send", func(t *testing.T) {
 		outCh := make(chan tsslib.Message, 2)
-		endCh := make(chan ecdsakeygen.LocalPartySaveData, 1)
+		endCh := make(chan *ecdsakeygen.LocalPartySaveData, 1)
 		share := ecdsakeygen.LocalPartySaveData{
 			LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(42), ShareID: big.NewInt(7)},
 		}
 		outCh <- newTestOutboundMessage("round3-first")
 		outCh <- newTestOutboundMessage("round3-final")
-		endCh <- share
+		endCh <- &share
 
 		rt := newSessionRuntime(context.Background(), 4)
 		defer rt.Stop()
@@ -751,11 +751,11 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 
 	t.Run("closed_outbound_after_result", func(t *testing.T) {
 		outCh := make(chan tsslib.Message)
-		endCh := make(chan ecdsakeygen.LocalPartySaveData, 1)
+		endCh := make(chan *ecdsakeygen.LocalPartySaveData, 1)
 		share := ecdsakeygen.LocalPartySaveData{
 			LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(84), ShareID: big.NewInt(9)},
 		}
-		endCh <- share
+		endCh <- &share
 		close(outCh)
 
 		rt := newSessionRuntime(context.Background(), 4)
@@ -774,10 +774,10 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 	t.Run("final_send_error", func(t *testing.T) {
 		finalSendErr := errors.New("final send failed")
 		outCh := make(chan tsslib.Message, 2)
-		endCh := make(chan ecdsakeygen.LocalPartySaveData, 1)
+		endCh := make(chan *ecdsakeygen.LocalPartySaveData, 1)
 		outCh <- newTestOutboundMessage("round3-first")
 		outCh <- newTestOutboundMessage("round3-final")
-		endCh <- ecdsakeygen.LocalPartySaveData{
+		endCh <- &ecdsakeygen.LocalPartySaveData{
 			LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(126), ShareID: big.NewInt(11)},
 		}
 
@@ -802,9 +802,9 @@ func TestDKGProtocolDoneWaitsForOutboundPump(t *testing.T) {
 
 	t.Run("cancellation", func(t *testing.T) {
 		outCh := make(chan tsslib.Message, 1)
-		endCh := make(chan ecdsakeygen.LocalPartySaveData, 1)
+		endCh := make(chan *ecdsakeygen.LocalPartySaveData, 1)
 		outCh <- newTestOutboundMessage("round3-final")
-		endCh <- ecdsakeygen.LocalPartySaveData{
+		endCh <- &ecdsakeygen.LocalPartySaveData{
 			LocalSecrets: ecdsakeygen.LocalSecrets{Xi: big.NewInt(168), ShareID: big.NewInt(13)},
 		}
 
@@ -940,7 +940,7 @@ func TestOutboundPumpRejectsReadyMessagesAfterCancellation(t *testing.T) {
 
 func TestDKGResultChannelClosedWithoutResultFails(t *testing.T) {
 	outCh := make(chan tsslib.Message)
-	endCh := make(chan ecdsakeygen.LocalPartySaveData)
+	endCh := make(chan *ecdsakeygen.LocalPartySaveData)
 	close(endCh)
 	rt := newSessionRuntime(context.Background(), 1)
 	defer rt.Stop()
@@ -952,6 +952,7 @@ func TestDKGResultChannelClosedWithoutResultFails(t *testing.T) {
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("runOutboundPump error = %v, want io.ErrUnexpectedEOF", err)
 	}
+	assertNoCompletion(t, rt, exec)
 }
 
 type countingUpdateParty struct {
@@ -1242,7 +1243,7 @@ func TestSignCompletionWaitsForOutboundDelivery(t *testing.T) {
 				msg.messageType = "binance.tsslib.ecdsa.signing.SignRound9Message"
 				outCh <- msg
 			}
-			endCh := make(chan common.SignatureData, 1)
+			endCh := make(chan *common.SignatureData, 1)
 			exec := New(Params{
 				SessionID: "sign-drain", LocalPartyID: "A", Stage: "sign", Algorithm: "ecdsa",
 				Party: &gatedStartParty{entered: make(chan struct{}), release: startReleased},
@@ -1280,7 +1281,7 @@ func TestSignCompletionWaitsForOutboundDelivery(t *testing.T) {
 			}()
 			t.Cleanup(func() { cancel(); <-joined })
 			waitForSignal(t, sendEntered, "SIGN send entry")
-			endCh <- common.SignatureData{Signature: []byte("sig")}
+			endCh <- &common.SignatureData{Signature: []byte("sig")}
 			select {
 			case err := <-errCh:
 				t.Fatalf("Run returned before outbound delivery: %v", err)
@@ -1314,7 +1315,7 @@ func TestSignOutboundClosedWaitsForResult(t *testing.T) {
 	outCh := make(chan tsslib.Message)
 	close(outCh)
 	exec := New(Params{
-		OutCh: outCh, SignECDSAEndCh: make(chan common.SignatureData),
+		OutCh: outCh, SignECDSAEndCh: make(chan *common.SignatureData),
 		Config: tssbnbutils.DefaultRunnerConfig(), Metrics: testMetrics{},
 	})
 	rt := newSessionRuntime(context.Background(), 1)
@@ -1350,7 +1351,7 @@ func TestSignOutboundClosedWaitsForResult(t *testing.T) {
 }
 
 func TestSignResultChannelClosedWithoutResultFails(t *testing.T) {
-	endCh := make(chan common.SignatureData)
+	endCh := make(chan *common.SignatureData)
 	close(endCh)
 	exec := New(Params{
 		SessionID:      "s1",

@@ -12,8 +12,8 @@ import (
 	tssservice "github.com/BroLabel/brosettlement-mpc-core/internal/tss/service"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 type Service struct {

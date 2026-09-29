@@ -19,9 +19,10 @@ import (
 	"time"
 
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	"github.com/btcsuite/btcd/btcec/v2"
+	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -593,7 +594,7 @@ func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publi
 	if err != nil {
 		t.Fatalf("decode derived public key: %v", err)
 	}
-	publicKey, err := btcec.ParsePubKey(publicKeyBytes, btcec.S256())
+	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	if err != nil {
 		t.Fatalf("parse derived public key with independent verifier: %v", err)
 	}
@@ -604,7 +605,7 @@ func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publi
 		t.Fatal("signature has invalid recovery ID")
 	}
 	compact := append([]byte{27 + signature.GetSignatureRecovery()[0]}, signature.GetSignature()...)
-	recovered, _, err := btcec.RecoverCompact(btcec.S256(), compact, digest)
+	recovered, _, err := btcecdsa.RecoverCompact(compact, digest)
 	if err != nil || !bytes.Equal(recovered.SerializeUncompressed(), publicKey.SerializeUncompressed()) {
 		t.Fatalf("signature did not recover the derived public key: %v", err)
 	}

@@ -19,9 +19,10 @@ import (
 	"time"
 
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	"github.com/btcsuite/btcd/btcec/v2"
+	btcecdsa "github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -533,7 +534,7 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 		ChildPath:       childPath,
 	}
 	derivedPublicKey, err := DeriveECDSAChildPublicKey(
-		fixture.outputs[mpc2Of3PartyA].PublicKey,
+		fixture.outputs[parties[0]].PublicKey,
 		fixture.chainCode,
 		derivationContext,
 	)
@@ -579,11 +580,18 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 		t.Fatal(err)
 	}
 
-	signature, err := fixture.services[parties[0]].ExportECDSASignature(sessionID)
-	if err != nil {
-		t.Fatalf("export signature: %v", err)
+	var first []byte
+	for _, partyID := range parties {
+		signature, err := fixture.services[partyID].ExportECDSASignature(sessionID)
+		if err != nil {
+			t.Fatalf("export signature: %v", err)
+		}
+		assertMPC2Of3Signature(t, &signature, derivedPublicKey, digest)
+		if first != nil && !bytes.Equal(first, signature.Signature) {
+			t.Fatal("parties returned different signatures")
+		}
+		first = append([]byte(nil), signature.Signature...)
 	}
-	assertMPC2Of3Signature(t, &signature, derivedPublicKey, digest)
 }
 
 func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publicKeyHex string, digest []byte) {
@@ -593,7 +601,7 @@ func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publi
 	if err != nil {
 		t.Fatalf("decode derived public key: %v", err)
 	}
-	publicKey, err := btcec.ParsePubKey(publicKeyBytes, btcec.S256())
+	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	if err != nil {
 		t.Fatalf("parse derived public key with independent verifier: %v", err)
 	}
@@ -604,7 +612,7 @@ func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publi
 		t.Fatal("signature has invalid recovery ID")
 	}
 	compact := append([]byte{27 + signature.GetSignatureRecovery()[0]}, signature.GetSignature()...)
-	recovered, _, err := btcec.RecoverCompact(btcec.S256(), compact, digest)
+	recovered, _, err := btcecdsa.RecoverCompact(compact, digest)
 	if err != nil || !bytes.Equal(recovered.SerializeUncompressed(), publicKey.SerializeUncompressed()) {
 		t.Fatalf("signature did not recover the derived public key: %v", err)
 	}

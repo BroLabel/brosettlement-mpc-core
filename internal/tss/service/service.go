@@ -11,8 +11,8 @@ import (
 	tsslogging "github.com/BroLabel/brosettlement-mpc-core/internal/tss/logging"
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	tssutils "github.com/BroLabel/brosettlement-mpc-core/tss/utils"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 	"log/slog"
 )
 

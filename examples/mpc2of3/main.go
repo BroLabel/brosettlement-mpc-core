@@ -18,7 +18,7 @@ import (
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 	"github.com/BroLabel/brosettlement-mpc-core/transport"
 	"github.com/BroLabel/brosettlement-mpc-core/tss"
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -314,7 +314,7 @@ func verifyECDSA(publicKeyHex string, digest, rBytes, sBytes []byte) error {
 	if err != nil {
 		return fmt.Errorf("decode derived public key: %w", err)
 	}
-	publicKey, err := btcec.ParsePubKey(publicKeyBytes, btcec.S256())
+	publicKey, err := btcec.ParsePubKey(publicKeyBytes)
 	if err != nil {
 		return fmt.Errorf("parse derived public key: %w", err)
 	}

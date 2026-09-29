@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 type blockingPartyTransport struct {

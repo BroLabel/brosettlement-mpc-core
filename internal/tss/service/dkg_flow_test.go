@@ -18,10 +18,10 @@ import (
 	tssbnbrunner "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/runner"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
 	coretransport "github.com/BroLabel/brosettlement-mpc-core/transport"
-	"github.com/bnb-chain/tss-lib/common"
-	"github.com/bnb-chain/tss-lib/crypto"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	"github.com/bnb-chain/tss-lib/v3/crypto"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func TestDKGInputDoesNotExposeChainContext(t *testing.T) {

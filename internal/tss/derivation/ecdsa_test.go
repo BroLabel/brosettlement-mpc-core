@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bnb-chain/tss-lib/crypto"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/crypto"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func testShareWithBigXj(t *testing.T) ecdsakeygen.LocalPartySaveData {

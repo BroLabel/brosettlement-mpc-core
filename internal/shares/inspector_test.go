@@ -10,9 +10,9 @@ import (
 	"reflect"
 	"testing"
 
-	tsscrypto "github.com/bnb-chain/tss-lib/crypto"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsscrypto "github.com/bnb-chain/tss-lib/v3/crypto"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func TestInspectEncodedECDSAKeyMaterialReturnsCanonicalEvidence(t *testing.T) {

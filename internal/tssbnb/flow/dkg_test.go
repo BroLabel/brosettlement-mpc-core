@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func TestBuildEdDSADKGDoesNotStartDetachedResultBridge(t *testing.T) {

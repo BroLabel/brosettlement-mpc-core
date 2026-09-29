@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/bnb-chain/tss-lib/common"
+	"github.com/bnb-chain/tss-lib/v3/common"
 	"golang.org/x/sync/errgroup"
 )
 

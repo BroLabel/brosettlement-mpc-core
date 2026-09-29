@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 var (

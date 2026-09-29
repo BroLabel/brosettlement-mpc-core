@@ -10,10 +10,10 @@ import (
 	bnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/support"
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	eddsakeygen "github.com/bnb-chain/tss-lib/eddsa/keygen"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	eddsakeygen "github.com/bnb-chain/tss-lib/v3/eddsa/keygen"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 var (
@@ -45,9 +45,9 @@ type Params struct {
 	Config                tssbnbutils.RunnerConfig
 	Metrics               bnbutils.Metrics
 
-	DKGECDSAEndCh  <-chan ecdsakeygen.LocalPartySaveData
-	DKGEdDSAEndCh  <-chan eddsakeygen.LocalPartySaveData
-	SignECDSAEndCh <-chan common.SignatureData
+	DKGECDSAEndCh  <-chan *ecdsakeygen.LocalPartySaveData
+	DKGEdDSAEndCh  <-chan *eddsakeygen.LocalPartySaveData
+	SignECDSAEndCh <-chan *common.SignatureData
 	DoneCh         <-chan struct{}
 }
 
@@ -72,9 +72,9 @@ type ProtocolExecution struct {
 	cfg                   tssbnbutils.RunnerConfig
 	metrics               bnbutils.Metrics
 
-	dkgECDSAEndCh  <-chan ecdsakeygen.LocalPartySaveData
-	dkgEdDSAEndCh  <-chan eddsakeygen.LocalPartySaveData
-	signECDSAEndCh <-chan common.SignatureData
+	dkgECDSAEndCh  <-chan *ecdsakeygen.LocalPartySaveData
+	dkgEdDSAEndCh  <-chan *eddsakeygen.LocalPartySaveData
+	signECDSAEndCh <-chan *common.SignatureData
 	doneCh         <-chan struct{}
 
 	ecdsaKeyShare *ecdsakeygen.LocalPartySaveData

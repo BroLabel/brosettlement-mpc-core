@@ -8,7 +8,7 @@ import (
 
 	tssbnbutils "github.com/BroLabel/brosettlement-mpc-core/internal/tssbnb/utils"
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 func (e *ProtocolExecution) runRecvWorker(rt *sessionRuntime, transport Transport) error {

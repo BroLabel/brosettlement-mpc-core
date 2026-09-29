@@ -8,8 +8,8 @@ import (
 	"reflect"
 
 	"github.com/BroLabel/brosettlement-mpc-core/protocol"
-	"github.com/bnb-chain/tss-lib/common"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
+	"github.com/bnb-chain/tss-lib/v3/common"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
 )
 
 type protocolResult struct {
@@ -48,6 +48,9 @@ func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime) error {
 			return io.ErrUnexpectedEOF
 		}
 		sig := cloneSignatureDataValue(value)
+		if sig == nil {
+			return io.ErrUnexpectedEOF
+		}
 		// The outbound owner drains queued frames before publishing success.
 		select {
 		case rt.signResult <- sig:
@@ -56,7 +59,7 @@ func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime) error {
 			return nil
 		}
 	case 2, 3:
-		if !ok {
+		if !ok || (chosen == 2 && value.IsNil()) {
 			return io.ErrUnexpectedEOF
 		}
 		rt.Emit(protocolEvent{typ: eventProtocolDone, result: protocolResult{}})
@@ -67,6 +70,12 @@ func (e *ProtocolExecution) runProtocolResultWorker(rt *sessionRuntime) error {
 }
 
 func cloneSignatureDataValue(value reflect.Value) *common.SignatureData {
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return nil
+		}
+		value = value.Elem()
+	}
 	fieldBytes := func(name string) []byte {
 		field := value.FieldByName(name)
 		if !field.IsValid() || field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.Uint8 {

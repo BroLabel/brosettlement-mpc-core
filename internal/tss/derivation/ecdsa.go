@@ -7,11 +7,11 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/bnb-chain/tss-lib/crypto"
-	"github.com/bnb-chain/tss-lib/crypto/ckd"
-	ecdsakeygen "github.com/bnb-chain/tss-lib/ecdsa/keygen"
-	ecdsasigning "github.com/bnb-chain/tss-lib/ecdsa/signing"
-	tsslib "github.com/bnb-chain/tss-lib/tss"
+	"github.com/bnb-chain/tss-lib/v3/crypto"
+	"github.com/bnb-chain/tss-lib/v3/crypto/ckd"
+	ecdsakeygen "github.com/bnb-chain/tss-lib/v3/ecdsa/keygen"
+	ecdsasigning "github.com/bnb-chain/tss-lib/v3/ecdsa/signing"
+	tsslib "github.com/bnb-chain/tss-lib/v3/tss"
 )
 
 type DKGMaterial struct {

@@ -40,3 +40,14 @@ func TestBuildParamsRejectsInvalidRequiredSignerThreshold(t *testing.T) {
 		})
 	}
 }
+
+// Turning either proof off must fail this production-parameter boundary check.
+func TestBuildParamsEnablesModulusAndFactorProofs(t *testing.T) {
+	params, _, _, err := BuildParams([]string{"A", "B", "C"}, "A", 2, "secp256k1", "ecdsa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params.NoProofMod() || params.NoProofFac() {
+		t.Fatal("DKG modulus or factor proofs are disabled")
+	}
+}

@@ -33,6 +33,13 @@ func IsValidSessionDescriptor(session SessionDescriptor) bool {
 	if len(session.Parties) == 0 || session.Threshold == 0 {
 		return false
 	}
+	seen := make(map[string]struct{}, len(session.Parties))
+	for _, partyID := range session.Parties {
+		if _, duplicate := seen[partyID]; duplicate {
+			return false
+		}
+		seen[partyID] = struct{}{}
+	}
 	return true
 }
 

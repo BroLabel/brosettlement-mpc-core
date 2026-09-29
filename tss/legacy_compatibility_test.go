@@ -2,18 +2,25 @@ package tss
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	corederivation "github.com/BroLabel/brosettlement-mpc-core/internal/tss/derivation"
 	"github.com/btcsuite/btcd/btcec/v2"
 )
 
@@ -183,4 +190,157 @@ func TestLegacyV1FixtureManifest(t *testing.T) {
 
 func legacyDerivation(path string) DerivationContext {
 	return DerivationContext{ProfileID: "legacy-synthetic", Chain: "application:opaque-network", Algorithm: AlgorithmECDSA, Curve: CurveSecp256k1, Scheme: DerivationSchemeBIP32Secp256k1, PublicKeyFormat: PublicKeyFormatUncompressedHex, AccountPath: "m/44'/60'/0'", ChildPath: path}
+}
+
+// The old corpus is loaded directly; SIGN must never persist or replace it.
+type legacyNoSaveWriter struct{ calls atomic.Uint32 }
+
+func (w *legacyNoSaveWriter) SaveShare(context.Context, SaveShareInput) error {
+	w.calls.Add(1)
+	return errors.New("legacy SIGN attempted SaveShare")
+}
+
+func newLegacySigningFixture(t *testing.T) (mpc2Of3Fixture, legacyManifest) {
+	t.Helper()
+	dir := filepath.Join("..", "testdata", "legacy-v1")
+	manifest, err := loadLegacyFixture(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newMPC2Of3ShareStore()
+	writer := &legacyNoSaveWriter{}
+	fixture := mpc2Of3Fixture{services: map[string]*Service{}, outputs: map[string]DKGOutput{}, keyID: "synthetic-legacy-v1-never-fund", chainCode: mustDecodeMPC2Of3Hex(t, manifest.ChainCode)}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, p := range manifest.Participants {
+		blob, err := os.ReadFile(filepath.Join(dir, p.Blob))
+		if err != nil {
+			t.Fatal(err)
+		}
+		store.shares[mpc2Of3ShareKey{p.PartyID, fixture.keyID}] = StoredShare{Blob: blob}
+		fixture.outputs[p.PartyID] = DKGOutput{PublicKey: manifest.RootPublicKey}
+		fixture.services[p.PartyID] = NewBnbService(logger, WithShareReader(&mpc2Of3PartyShareReader{store: store, partyID: p.PartyID}), WithShareWriter(writer))
+	}
+	t.Cleanup(func() {
+		if writer.calls.Load() != 0 {
+			t.Fatal("legacy SIGN wrote a share")
+		}
+		for _, p := range manifest.Participants {
+			hash := sha256.Sum256(store.blob(p.PartyID, fixture.keyID))
+			if hex.EncodeToString(hash[:]) != p.SHA256 {
+				t.Fatalf("stored legacy blob changed: %s", p.PartyID)
+			}
+		}
+		if _, err := loadLegacyFixture(dir); err != nil {
+			t.Fatal(err)
+		}
+	})
+	return fixture, manifest
+}
+
+func TestLegacyV1EverySigningSubset(t *testing.T) {
+	fixture, manifest := newLegacySigningFixture(t)
+	for _, baseline := range manifest.Signatures {
+		t.Run(strings.Join(baseline.Parties, "+")+baseline.Path, func(t *testing.T) {
+			verifyMPC2Of3SigningSession(t, fixture, baseline.Parties, baseline.Path)
+		})
+	}
+}
+
+// Concurrent sessions share facade instances and persisted blobs but not signing state.
+func TestLegacyV1ConcurrentSigning(t *testing.T) {
+	fixture, manifest := newLegacySigningFixture(t)
+	for _, baseline := range manifest.Signatures {
+		t.Run(strings.Join(baseline.Parties, "+")+baseline.Path, func(t *testing.T) {
+			t.Parallel()
+			verifyMPC2Of3SigningSession(t, fixture, baseline.Parties, baseline.Path)
+		})
+	}
+}
+
+// Snapshot the actual decoded inputs, including point coordinates and Xi, rather
+// than comparing pointers whose referents might have been mutated in place.
+func TestLegacyV1DerivationDoesNotAliasInputs(t *testing.T) {
+	_, manifest := newLegacySigningFixture(t)
+	for _, p := range manifest.Participants {
+		blob, err := os.ReadFile(filepath.Join("..", "testdata", "legacy-v1", p.Blob))
+		if err != nil {
+			t.Fatal(err)
+		}
+		material, err := UnmarshalKeyMaterial(blob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := func(v any) []byte {
+			b, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}
+		before := snapshot(material)
+		first, err := corederivation.PrepareECDSASigningShare(material.Share, material.ChainCode, toCoreDerivationContext(legacyDerivation("/0/0")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		firstBefore := snapshot(first)
+		second, err := corederivation.PrepareECDSASigningShare(material.Share, material.ChainCode, toCoreDerivationContext(legacyDerivation("/1/7")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(before, snapshot(material)) || !bytes.Equal(firstBefore, snapshot(first)) {
+			t.Fatal("derivation mutated an input or a previous session")
+		}
+		if first.DerivedPublicKey != manifest.Children[0].PublicKey || second.DerivedPublicKey != manifest.Children[1].PublicKey {
+			t.Fatal("child identity changed")
+		}
+		// Replacing a prepared BigXj entry must not overwrite another session's slice.
+		second.Share.BigXj[0] = second.Share.ECDSAPub
+		if !bytes.Equal(before, snapshot(material)) || !bytes.Equal(firstBefore, snapshot(first)) {
+			t.Fatal("BigXj slice aliases another session")
+		}
+	}
+}
+
+func TestLegacyV1RejectsInvalidSigningRequest(t *testing.T) {
+	fixture, manifest := newLegacySigningFixture(t)
+	parties := manifest.Signatures[0].Parties
+	for _, name := range []string{"unknown local participant", "undersized subset", "duplicate subset", "wrong derived key", "wrong chain", "empty digest"} {
+		t.Run(name, func(t *testing.T) {
+			dc := legacyDerivation("/0/0")
+			_, transports := newMPC2Of3FrameBus(parties)
+			req := SignSessionRequest{Session: SignSessionDescriptor{SessionID: "invalid-" + name, OrgID: "legacy-test", KeyID: fixture.keyID, Parties: append([]string(nil), parties...), Threshold: 2, Algorithm: AlgorithmECDSA, Curve: CurveSecp256k1, Chain: dc.Chain}, LocalPartyID: parties[0], Digest: bytes.Repeat([]byte{1}, 32), DerivationContext: &dc, Transport: transports[parties[0]]}
+			switch name {
+			case "unknown local participant":
+				req.LocalPartyID = "unknown"
+			case "undersized subset":
+				req.Session.Parties = parties[:1]
+			case "duplicate subset":
+				req.Session.Parties = []string{parties[0], parties[0]}
+			case "wrong derived key":
+				dc.DerivedPublicKey = manifest.Children[1].PublicKey
+			case "wrong chain":
+				dc.Chain = "application:wrong-network"
+			case "empty digest":
+				req.Digest = nil
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err := fixture.services[parties[0]].RunSignSession(ctx, req)
+			if err == nil || errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("request did not fail validation: %v", err)
+			}
+			if _, err := fixture.services[parties[0]].ExportECDSASignature(req.Session.SessionID); err == nil {
+				t.Fatal("invalid request exported a signature")
+			}
+		})
+	}
+}
+
+func TestLegacyV1DuplicateSubsetFailsValidation(t *testing.T) {
+	dc := legacyDerivation("/0/0")
+	_, transports := newMPC2Of3FrameBus([]string{"mpc-signer"})
+	req := SignSessionRequest{Session: SignSessionDescriptor{SessionID: "duplicate", OrgID: "test-only", KeyID: "test-only", Parties: []string{"mpc-signer", "mpc-signer"}, Threshold: 2, Algorithm: AlgorithmECDSA, Curve: CurveSecp256k1, Chain: dc.Chain}, LocalPartyID: "mpc-signer", Digest: []byte{1}, DerivationContext: &dc, Transport: transports["mpc-signer"]}
+	if err := req.Validate(); !errors.Is(err, ErrInvalidSessionDescriptor) {
+		t.Fatalf("duplicate subset error = %v, want ErrInvalidSessionDescriptor", err)
+	}
 }

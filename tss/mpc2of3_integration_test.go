@@ -534,7 +534,7 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 		ChildPath:       childPath,
 	}
 	derivedPublicKey, err := DeriveECDSAChildPublicKey(
-		fixture.outputs[mpc2Of3PartyA].PublicKey,
+		fixture.outputs[parties[0]].PublicKey,
 		fixture.chainCode,
 		derivationContext,
 	)
@@ -580,11 +580,18 @@ func verifyMPC2Of3SigningSession(t *testing.T, fixture mpc2Of3Fixture, parties [
 		t.Fatal(err)
 	}
 
-	signature, err := fixture.services[parties[0]].ExportECDSASignature(sessionID)
-	if err != nil {
-		t.Fatalf("export signature: %v", err)
+	var first []byte
+	for _, partyID := range parties {
+		signature, err := fixture.services[partyID].ExportECDSASignature(sessionID)
+		if err != nil {
+			t.Fatalf("export signature: %v", err)
+		}
+		assertMPC2Of3Signature(t, &signature, derivedPublicKey, digest)
+		if first != nil && !bytes.Equal(first, signature.Signature) {
+			t.Fatal("parties returned different signatures")
+		}
+		first = append([]byte(nil), signature.Signature...)
 	}
-	assertMPC2Of3Signature(t, &signature, derivedPublicKey, digest)
 }
 
 func assertMPC2Of3Signature(t *testing.T, signature *common.SignatureData, publicKeyHex string, digest []byte) {
